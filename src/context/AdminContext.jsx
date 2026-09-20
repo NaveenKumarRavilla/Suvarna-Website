@@ -129,7 +129,7 @@ const loadStore = () => {
       ...base,
       admins,
       products: Array.isArray(base.products) ? base.products : seedStore().products,
-      banners: Array.isArray(base.banners) ? base.banners : seedStore().banners,
+      banners: dedupeBanners(Array.isArray(base.banners) ? base.banners : seedStore().banners),
       offers: Array.isArray(base.offers) ? base.offers : seedStore().offers,
       videos: Array.isArray(base.videos) ? base.videos : seedStore().videos,
       orders: Array.isArray(base.orders) ? base.orders : [],
@@ -146,6 +146,17 @@ const nextId = (list) =>
   list.length ? Math.max(...list.map((i) => Number(i.id) || 0)) + 1 : 1;
 
 const normalizeEmail = (email = '') => String(email || '').trim().toLowerCase();
+
+const dedupeBanners = (items = []) => {
+  const seen = new Set();
+  return items.filter((item) => {
+    if (!item) return false;
+    const key = item.id ? `id:${item.id}` : `title:${item.title || ''}|link:${item.link || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
 
 const syncCustomerOrderCounts = (customers = [], orders = []) =>
   customers.map((customer) => ({
@@ -198,9 +209,14 @@ export function AdminProvider({ children }) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+      const serialized = JSON.stringify(store);
+      if (serialized.length > 4_800_000) {
+        localStorage.removeItem(STORAGE_KEY);
+        return;
+      }
+      localStorage.setItem(STORAGE_KEY, serialized);
     } catch {
-      /* storage unavailable */
+      localStorage.removeItem(STORAGE_KEY);
     }
   }, [store]);
 
@@ -300,15 +316,15 @@ export function AdminProvider({ children }) {
       addBanner: (item) =>
         setStore((s) => ({
           ...s,
-          banners: [...s.banners, { ...item, id: nextId(s.banners) }],
+          banners: dedupeBanners([...s.banners, { ...item, id: nextId(s.banners) }]),
         })),
       updateBanner: (id, patch) =>
         setStore((s) => ({
           ...s,
-          banners: s.banners.map((b) => (b.id === id ? { ...b, ...patch } : b)),
+          banners: dedupeBanners(s.banners.map((b) => (b.id === id ? { ...b, ...patch } : b))),
         })),
       deleteBanner: (id) =>
-        setStore((s) => ({ ...s, banners: s.banners.filter((b) => b.id !== id) })),
+        setStore((s) => ({ ...s, banners: dedupeBanners(s.banners.filter((b) => b.id !== id)) })),
 
       offers: store.offers,
       addOffer: (item) =>

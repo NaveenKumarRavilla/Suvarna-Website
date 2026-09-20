@@ -233,6 +233,12 @@ export default function AdminProducts() {
               label="Product Images *"
               value={form.images}
               multiple
+              recommendedWidth={1200}
+              recommendedHeight={1200}
+              minimumWidth={600}
+              minimumHeight={600}
+              maximumWidth={2000}
+              maximumHeight={2000}
               onChange={(v) => setForm((f) => ({ ...f, images: v }))}
             />
             <div className="grid grid-cols-2 gap-4">

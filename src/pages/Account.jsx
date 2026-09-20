@@ -221,7 +221,7 @@ export default function Account() {
                             src={product.images?.[0] || product.image}
                             alt={product.name}
                             onError={handleImgError}
-                            className="aspect-[4/3] w-full object-cover"
+                            className="aspect-[4/3] w-full bg-white object-contain p-2"
                           />
                         </Link>
                         <button

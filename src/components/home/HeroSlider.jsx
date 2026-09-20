@@ -4,30 +4,176 @@ import { useAdmin } from '../../context/AdminContext';
 import { handleImgError } from '../../utils/helpers';
 import Button from '../common/Button';
 
-const AUTOPLAY_MS = 5000;
+const AUTOPLAY_MS = 10000;
 
 export default function HeroSlider() {
   const { banners: heroSlides } = useAdmin();
   const [index, setIndex] = useState(0);
   const timerRef = useRef(null);
+  const videoRefs = useRef({});
+  const sliderRef = useRef(null);
+  const hasUserInteractionRef = useRef(false);
+  const allowVideoPlaybackRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      localStorage.removeItem('suvarna_hero_banner_index');
+    } catch {
+      // storage unavailable
+    }
+  }, []);
+
+  const updateIndex = useCallback((nextIndex) => {
+    if (!heroSlides.length) return;
+    setIndex((nextIndex + heroSlides.length) % heroSlides.length);
+  }, [heroSlides.length]);
 
   const goTo = useCallback(
-    (i) => setIndex((i + heroSlides.length) % heroSlides.length),
-    []
+    (i) => {
+      if (!heroSlides.length) return;
+      updateIndex(i);
+    },
+    [heroSlides.length, updateIndex]
   );
 
   const restartAutoplay = useCallback(() => {
+    if (!heroSlides.length) return;
     if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(
-      () => setIndex((prev) => (prev + 1) % heroSlides.length),
-      AUTOPLAY_MS
-    );
-  }, []);
+    timerRef.current = setInterval(() => {
+      updateIndex(index + 1);
+    }, AUTOPLAY_MS);
+  }, [heroSlides.length, index, updateIndex]);
 
   useEffect(() => {
+    if (!heroSlides.length) {
+      setIndex(0);
+      return;
+    }
+
+    setIndex((prev) => (prev >= heroSlides.length ? 0 : prev));
     restartAutoplay();
     return () => clearInterval(timerRef.current);
-  }, [restartAutoplay]);
+  }, [heroSlides.length, restartAutoplay]);
+
+  useEffect(() => {
+    const handleInteraction = (event) => {
+      const sliderNode = sliderRef.current;
+      if (!sliderNode) return;
+
+      const clickedInsideSlider = event.target && sliderNode.contains(event.target);
+      if (!clickedInsideSlider) return;
+
+      hasUserInteractionRef.current = true;
+      allowVideoPlaybackRef.current = true;
+
+      const activeVideo = videoRefs.current[heroSlides[index]?.id];
+      if (!activeVideo) return;
+      if (document.visibilityState === 'visible') {
+        activeVideo.muted = false;
+        activeVideo.play().catch(() => {
+          activeVideo.muted = true;
+          activeVideo.play().catch(() => {});
+        });
+      }
+    };
+
+    document.addEventListener('pointerdown', handleInteraction, { passive: true });
+    document.addEventListener('touchstart', handleInteraction, { passive: true });
+    document.addEventListener('keydown', handleInteraction, { passive: true });
+
+    return () => {
+      document.removeEventListener('pointerdown', handleInteraction);
+      document.removeEventListener('touchstart', handleInteraction);
+      document.removeEventListener('keydown', handleInteraction);
+    };
+  }, [heroSlides, index]);
+
+  useEffect(() => {
+    Object.entries(videoRefs.current).forEach(([slideId, video]) => {
+      if (!video) return;
+
+      const isActive = String(slideId) === String(heroSlides[index]?.id ?? '');
+      const shouldAutoPlay = document.visibilityState === 'visible' && allowVideoPlaybackRef.current && isActive;
+
+      if (!isActive) {
+        video.pause();
+        video.currentTime = 0;
+        return;
+      }
+
+      if (!shouldAutoPlay) {
+        video.pause();
+        video.muted = true;
+        return;
+      }
+
+      video.muted = false;
+      if (video.paused) {
+        video.play().catch(() => {
+          video.muted = true;
+          video.play().catch(() => {});
+        });
+      }
+    });
+  }, [heroSlides, index]);
+
+  useEffect(() => {
+    const sliderNode = sliderRef.current;
+    if (!sliderNode) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        if (!entry) return;
+
+        const activeVideo = videoRefs.current[heroSlides[index]?.id];
+        if (!activeVideo) return;
+
+        const canPlay = entry.isIntersecting && document.visibilityState === 'visible' && allowVideoPlaybackRef.current;
+
+        if (canPlay) {
+          activeVideo.muted = false;
+          activeVideo.play().catch(() => {
+            activeVideo.muted = true;
+            activeVideo.play().catch(() => {});
+          });
+        } else {
+          activeVideo.pause();
+          activeVideo.muted = true;
+        }
+      },
+      { threshold: 0.2 }
+    );
+
+    observer.observe(sliderNode);
+
+    const handleVisibilityChange = () => {
+      const activeVideo = videoRefs.current[heroSlides[index]?.id];
+      if (!activeVideo) return;
+
+      if (document.hidden || !allowVideoPlaybackRef.current) {
+        activeVideo.pause();
+        activeVideo.muted = true;
+        return;
+      }
+
+      const isVisible = sliderRef.current && sliderRef.current.getBoundingClientRect().top < window.innerHeight && sliderRef.current.getBoundingClientRect().bottom > 0;
+      if (isVisible) {
+        activeVideo.muted = false;
+        activeVideo.play().catch(() => {
+          activeVideo.muted = true;
+          activeVideo.play().catch(() => {});
+        });
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [heroSlides, index]);
 
   const handlePrev = () => {
     goTo(index - 1);
@@ -40,6 +186,7 @@ export default function HeroSlider() {
 
   return (
     <section
+      ref={sliderRef}
       aria-label="Featured promotions"
       className="group/slider relative h-[320px] overflow-hidden rounded-2xl shadow-card sm:h-[380px] lg:h-[440px]"
     >
@@ -77,13 +224,45 @@ export default function HeroSlider() {
               </div>
             </div>
             <div className="hidden items-center justify-center p-8 md:flex">
-              <img
-                src={slide.image}
-                alt={slide.title}
-                loading={i === 0 ? 'eager' : 'lazy'}
-                onError={handleImgError}
-                className="max-h-[300px] w-full rounded-xl object-cover shadow-2xl ring-1 ring-white/20 lg:max-h-[340px]"
-              />
+              {slide.mediaType === 'video' || slide.video ? (
+                <div className="relative h-[260px] w-full overflow-hidden rounded-xl shadow-2xl ring-1 ring-white/20 lg:h-[300px]">
+                  <video
+                    key={`${slide.id}-${index}`}
+                    ref={(el) => {
+                      if (el) videoRefs.current[slide.id] = el;
+                    }}
+                    src={slide.video || slide.image}
+                    autoPlay={false}
+                    loop
+                    muted={true}
+                    playsInline
+                    controls={false}
+                    preload="auto"
+                    onCanPlay={(e) => {
+                      if (
+                        String(slide.id) === String(heroSlides[index]?.id ?? '') &&
+                        document.visibilityState === 'visible' &&
+                        allowVideoPlaybackRef.current
+                      ) {
+                        e.target.play().catch(() => {
+                          e.target.muted = true;
+                          e.target.play().catch(() => {});
+                        });
+                      }
+                    }}
+                    className="h-full w-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-r from-slate-900/30 via-transparent to-slate-900/20" />
+                </div>
+              ) : (
+                <img
+                  src={slide.image}
+                  alt={slide.title}
+                  loading={i === 0 ? 'eager' : 'lazy'}
+                  onError={handleImgError}
+                  className="max-h-[300px] w-full rounded-xl object-cover shadow-2xl ring-1 ring-white/20 lg:max-h-[340px]"
+                />
+              )}
             </div>
           </div>
         </div>

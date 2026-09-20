@@ -1,19 +1,37 @@
 import { useEffect, useRef, useState } from 'react';
-import { UploadCloud, X, Link2 } from 'lucide-react';
-import { readImageFile } from '../../utils/imageUpload';
+import { UploadCloud, X, Link2, Image as ImageIcon } from 'lucide-react';
+import { getImageDimensions, readImageFile } from '../../utils/imageUpload';
 
 /**
  * Reusable image picker: upload from device (stored as data URL) OR paste a URL.
  * Supports single value (string) and multiple value (array) for admin product images.
  */
-export default function ImageUpload({ value = '', onChange, label = 'Image', multiple = false }) {
+export default function ImageUpload({
+  value = '',
+  onChange,
+  label = 'Image',
+  multiple = false,
+  recommendedWidth = null,
+  recommendedHeight = null,
+  minimumWidth = null,
+  minimumHeight = null,
+  maximumWidth = null,
+  maximumHeight = null,
+}) {
   const fileRef = useRef(null);
   const [error, setError] = useState('');
   const [showUrl, setShowUrl] = useState(false);
   const [url, setUrl] = useState('');
+  const [imageMeta, setImageMeta] = useState(null);
 
   const previewImages = Array.isArray(value) ? value : value ? [value] : [];
   const isDataUrl = typeof value === 'string' && value.startsWith('data:');
+  const recommendedText = recommendedWidth && recommendedHeight
+    ? `Good size: ${recommendedWidth} × ${recommendedHeight}px`
+    : 'Use a high-quality image';
+  const minText = minimumWidth && minimumHeight ? `Minimum: ${minimumWidth} × ${minimumHeight}px` : '';
+  const maxText = maximumWidth && maximumHeight ? `Large image accepted up to ${maximumWidth} × ${maximumHeight}px` : '';
+  const guideText = [recommendedText, minText, maxText].filter(Boolean).join(' • ');
 
   useEffect(() => {
     if (!isDataUrl && !multiple && typeof value === 'string') setUrl(value);
@@ -25,6 +43,27 @@ export default function ImageUpload({ value = '', onChange, label = 'Image', mul
     setError('');
 
     try {
+      const dimensions = await getImageDimensions(files[0]);
+      setImageMeta(dimensions);
+
+      if (recommendedWidth && recommendedHeight) {
+        const ratioDifference = Math.abs((dimensions.width / dimensions.height) - (recommendedWidth / recommendedHeight));
+        const isTooSmall = minimumWidth && minimumHeight ? dimensions.width < minimumWidth || dimensions.height < minimumHeight : false;
+        const isTooLarge = maximumWidth && maximumHeight ? dimensions.width > maximumWidth || dimensions.height > maximumHeight : false;
+
+        if (isTooSmall || isTooLarge || ratioDifference > 0.45) {
+          const warningMessage = isTooSmall
+            ? `Image is smaller than recommended. Try a sharper image around ${recommendedWidth} × ${recommendedHeight}px.`
+            : isTooLarge
+              ? `This image is larger than ideal. Best to keep it within ${maximumWidth} × ${maximumHeight}px.`
+              : `This image ratio is not ideal. Better to use ${recommendedWidth} × ${recommendedHeight}px.`;
+
+          setError(`${warningMessage} Current file: ${dimensions.width} × ${dimensions.height}px.`);
+        } else {
+          setError('');
+        }
+      }
+
       if (multiple) {
         const uploaded = [];
         for (const file of files) {
@@ -71,10 +110,22 @@ export default function ImageUpload({ value = '', onChange, label = 'Image', mul
     <div>
       <span className="mb-1.5 block text-xs font-semibold text-slate-600">{label}</span>
 
-      <div className={`grid ${multiple ? 'grid-cols-2 gap-2 sm:grid-cols-3' : ''}`}> 
+      {(recommendedWidth || recommendedHeight || minimumWidth || maximumWidth) && (
+        <div className="mb-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] text-blue-700">
+          <div className="flex items-center gap-1.5 font-semibold">
+            <ImageIcon size={12} />
+            <span>{guideText}</span>
+          </div>
+          {imageMeta && (
+            <div className="mt-1 text-blue-600">Selected image: {imageMeta.width} × {imageMeta.height}px</div>
+          )}
+        </div>
+      )}
+
+      <div className={`grid ${multiple ? 'grid-cols-2 gap-2 sm:grid-cols-3' : ''}`}>
         {previewImages.map((image, idx) => (
-          <div key={`${image}-${idx}`} className="relative overflow-hidden rounded-lg border border-slate-200">
-            <img src={image} alt="Preview" className={multiple ? 'h-28 w-full object-cover' : 'h-36 w-full object-cover'} />
+          <div key={`${image}-${idx}`} className="relative overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <img src={image} alt="Preview" className={multiple ? 'h-28 w-full object-contain p-1' : 'h-36 w-full object-contain p-1'} />
             <button
               type="button"
               onClick={() => removeAt(idx)}

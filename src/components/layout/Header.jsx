@@ -1,29 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Cpu, ShoppingCart, User, ShieldCheck, ChevronDown, Package, LogOut, LayoutGrid, Heart } from 'lucide-react';
+import { ShoppingCart, User, ShieldCheck, ChevronDown, Package, LogOut, LayoutGrid, Heart } from 'lucide-react';
 import SearchBar from '../common/SearchBar';
 import MobileHeader from './MobileHeader';
 import useCart from '../../hooks/useCart';
 import { useWishlist } from '../../context/WishlistContext';
 import { useAdmin } from '../../context/AdminContext';
 import { useAuth } from '../../context/AuthContext';
+import logo from '../../assets/suvarna-logo.svg';
 
 export function Logo({ compact = false }) {
   return (
-    <Link to="/" className="flex shrink-0 items-center gap-2.5" aria-label="Suvarna IT Enterprises - Home">
-      <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent text-navy-900 shadow-md">
-        <Cpu size={22} strokeWidth={2.2} />
-      </span>
-      {!compact && (
-        <span className="leading-tight">
-          <span className="block text-lg font-extrabold tracking-wide text-white">
-            SUVARNA
-          </span>
-          <span className="block text-[10px] font-semibold tracking-[0.3em] text-accent">
-            IT ENTERPRISES
-          </span>
-        </span>
-      )}
+    <Link to="/" className="flex shrink-0 items-center" aria-label="Suvarna IT Enterprises - Home">
+      <img
+        src={logo}
+        alt="Suvarna IT Enterprises"
+        className={compact ? 'h-9 w-auto max-w-[140px] object-contain sm:h-10' : 'h-10 w-auto max-w-[180px] object-contain sm:h-14 lg:h-16'}
+      />
     </Link>
   );
 }

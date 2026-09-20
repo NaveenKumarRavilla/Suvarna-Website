@@ -15,9 +15,9 @@ import {
   Store,
   Menu,
   X,
-  Cpu,
 } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
+import logo from '../../assets/suvarna-logo.svg';
 
 const navItems = [
   { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -37,14 +37,8 @@ function Sidebar({ onNavigate }) {
   const visibleItems = navItems.filter((item) => item.end || isMaster || hasPermission(item.to.replace('/admin/', '')));
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2.5 border-b border-slate-100 px-5 py-4">
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-accent">
-          <Cpu size={18} />
-        </span>
-        <span className="leading-tight">
-          <span className="block text-sm font-extrabold tracking-wide text-primary">SUVARNA</span>
-          <span className="block text-[9px] font-semibold tracking-[0.25em] text-accent-dark">ADMIN PANEL</span>
-        </span>
+      <div className="flex items-center justify-center border-b border-slate-100 px-5 py-4">
+        <img src={logo} alt="Suvarna IT Enterprises" className="h-10 w-auto max-w-[180px] object-contain sm:h-12" />
       </div>
 
       <nav aria-label="Admin controls" className="flex-1 overflow-y-auto py-3">

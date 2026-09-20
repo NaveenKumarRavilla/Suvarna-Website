@@ -25,16 +25,16 @@ export default function ProductCard({ product }) {
   };
 
   return (
-    <article className="group flex flex-col overflow-hidden rounded-xl bg-white shadow-card transition-all duration-300 hover:-translate-y-1 hover:shadow-card-hover">
+    <article className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-b from-white to-slate-50 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-secondary/40 hover:shadow-card-hover">
       {/* Image */}
-      <div className="relative overflow-hidden bg-slate-50">
-        <Link to={`/product/${product.id}`} aria-label={`View ${product.name}`}>
+      <div className="relative overflow-hidden border-b border-slate-200 bg-slate-50 p-2">
+        <Link to={`/product/${product.id}`} aria-label={`View ${product.name}`} className="block overflow-hidden rounded-xl bg-white">
           <img
             src={product.images?.[0] || product.image}
             alt={product.name}
             loading="lazy"
             onError={handleImgError}
-            className="aspect-[4/3] w-full object-cover transition-transform duration-500 group-hover:scale-105"
+            className="aspect-[4/3] w-full rounded-xl bg-white object-contain p-3 transition-transform duration-500 group-hover:scale-105"
           />
         </Link>
         {discount > 0 && (

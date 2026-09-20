@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import {
-  Cpu,
   Phone,
   Mail,
   MapPin,
@@ -11,6 +10,7 @@ import {
   Youtube,
 } from 'lucide-react';
 import { COMPANY, whatsappLink } from '../../utils/helpers';
+import logo from '../../assets/suvarna-logo.svg';
 
 const columns = [
   {
@@ -58,18 +58,8 @@ export default function Footer() {
       <div className="mx-auto grid max-w-8xl grid-cols-1 gap-10 px-4 py-12 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
         {/* Company */}
         <div>
-          <Link to="/" className="flex items-center gap-2.5">
-            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent text-navy-900">
-              <Cpu size={22} strokeWidth={2.2} />
-            </span>
-            <span className="leading-tight">
-              <span className="block text-lg font-extrabold tracking-wide text-white">
-                SUVARNA
-              </span>
-              <span className="block text-[10px] font-semibold tracking-[0.3em] text-accent">
-                IT ENTERPRISES
-              </span>
-            </span>
+          <Link to="/" className="inline-flex items-center">
+            <img src={logo} alt="Suvarna IT Enterprises" className="h-12 w-auto max-w-[210px] object-contain sm:h-16" />
           </Link>
           <p className="mt-4 text-sm leading-relaxed text-slate-400">
             Suvarna IT Enterprises is your trusted partner for laptops, desktops,

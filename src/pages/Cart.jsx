@@ -48,7 +48,7 @@ export default function Cart() {
                   alt={item.name}
                   loading="lazy"
                   onError={handleImgError}
-                  className="h-24 w-28 rounded-lg object-cover"
+                  className="h-24 w-28 rounded-lg bg-white object-contain p-1"
                 />
               </Link>
               <div className="min-w-0 flex-1">

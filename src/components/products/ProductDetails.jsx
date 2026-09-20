@@ -11,6 +11,8 @@ import {
   Truck,
   Zap,
   Check,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import useCart from '../../hooks/useCart';
 import { useWishlist } from '../../context/WishlistContext';
@@ -92,19 +94,51 @@ export default function ProductDetails({ product, related }) {
     navigate('/checkout');
   };
 
+  const showPrevImage = () => {
+    setActiveImage((current) => (current === 0 ? galleryImages.length - 1 : current - 1));
+  };
+
+  const showNextImage = () => {
+    setActiveImage((current) => (current === galleryImages.length - 1 ? 0 : current + 1));
+  };
+
   return (
     <div className="animate-fade-up">
       <div className="grid gap-8 lg:grid-cols-2">
         {/* Gallery */}
         <div>
-          <div className="overflow-hidden rounded-xl bg-white shadow-card">
-            <img
-              src={galleryImages[activeImage] || product.image}
-              alt={`${product.name} - image ${activeImage + 1}`}
-              onError={handleImgError}
-              className="aspect-[4/3] w-full object-cover"
-            />
+          <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-3 shadow-card">
+            <div className="overflow-hidden rounded-xl bg-white">
+              <img
+                src={galleryImages[activeImage] || product.image}
+                alt={`${product.name} - image ${activeImage + 1}`}
+                onError={handleImgError}
+                className="aspect-[4/3] w-full rounded-xl bg-white object-contain p-3 transition-transform duration-500 group-hover:scale-[1.02]"
+              />
+            </div>
+
+            {galleryImages.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={showPrevImage}
+                  aria-label="View previous image"
+                  className="absolute left-5 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/90 text-slate-700 shadow-lg transition hover:bg-white hover:text-secondary"
+                >
+                  <ChevronLeft size={18} />
+                </button>
+                <button
+                  type="button"
+                  onClick={showNextImage}
+                  aria-label="View next image"
+                  className="absolute right-5 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/90 text-slate-700 shadow-lg transition hover:bg-white hover:text-secondary"
+                >
+                  <ChevronRight size={18} />
+                </button>
+              </>
+            )}
           </div>
+
           <div className="mt-3 grid grid-cols-4 gap-3">
             {galleryImages.map((src, i) => (
               <button
@@ -113,8 +147,10 @@ export default function ProductDetails({ product, related }) {
                 onClick={() => setActiveImage(i)}
                 aria-label={`View image ${i + 1}`}
                 aria-pressed={activeImage === i}
-                className={`overflow-hidden rounded-lg bg-white shadow-sm ring-2 transition ${
-                  activeImage === i ? 'ring-secondary' : 'ring-transparent hover:ring-slate-300'
+                className={`overflow-hidden rounded-xl border bg-white p-1 shadow-sm transition ${
+                  activeImage === i
+                    ? 'border-secondary ring-2 ring-secondary/20 shadow-md'
+                    : 'border-slate-200 hover:border-slate-300 hover:shadow-md'
                 }`}
               >
                 <img
@@ -122,7 +158,7 @@ export default function ProductDetails({ product, related }) {
                   alt=""
                   loading="lazy"
                   onError={handleImgError}
-                  className="aspect-[4/3] w-full object-cover"
+                  className="aspect-[4/3] w-full rounded-lg bg-white object-contain"
                 />
               </button>
             ))}
