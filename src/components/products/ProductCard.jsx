@@ -107,21 +107,22 @@ export default function ProductCard({ product }) {
         </div>
 
         {/* Actions */}
-        <div className="mt-2 flex gap-2">
+        <div className="mt-2 grid grid-cols-3 gap-2 sm:flex">
           <button
             type="button"
             onClick={handleAddToCart}
             disabled={outOfStock}
-            className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-primary px-2 py-2 text-[11px] font-semibold text-primary transition hover:bg-primary hover:text-white disabled:cursor-not-allowed disabled:opacity-40 sm:text-xs"
+            aria-label={`Add ${product.name} to cart`}
+            className="flex h-10 w-full items-center justify-center rounded-lg border border-primary text-primary transition hover:bg-primary hover:text-white disabled:cursor-not-allowed disabled:opacity-40 sm:h-auto sm:w-auto sm:flex-1 sm:gap-1 sm:px-2 sm:py-2 sm:text-xs"
           >
-            <ShoppingCart size={13} />
-            Add to Cart
+            <ShoppingCart size={16} className="sm:h-[13px] sm:w-[13px]" />
+            <span className="hidden sm:inline">Add to Cart</span>
           </button>
           <button
             type="button"
             onClick={handleBuyNow}
             disabled={outOfStock}
-            className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-accent px-2 py-2 text-[11px] font-bold text-navy-900 transition hover:bg-accent-dark hover:text-white disabled:cursor-not-allowed disabled:opacity-40 sm:text-xs"
+            className="flex h-10 w-full items-center justify-center gap-1 rounded-lg bg-accent px-2 py-2 text-[11px] font-bold leading-tight text-navy-900 transition hover:bg-accent-dark hover:text-white disabled:cursor-not-allowed disabled:opacity-40 sm:h-auto sm:flex-1 sm:text-xs"
           >
             <Zap size={13} />
             Buy Now
@@ -131,7 +132,7 @@ export default function ProductCard({ product }) {
             target="_blank"
             rel="noopener noreferrer"
             aria-label={`Enquire about ${product.name} on WhatsApp`}
-            className="flex items-center justify-center rounded-lg bg-[#25D366] px-2.5 text-white transition hover:bg-[#1DA851]"
+            className="flex h-10 w-full items-center justify-center rounded-lg bg-[#25D366] text-white transition hover:bg-[#1DA851] sm:h-auto sm:w-auto sm:px-2.5"
           >
             <MessageCircle size={15} />
           </a>

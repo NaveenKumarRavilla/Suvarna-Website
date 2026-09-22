@@ -1,4 +1,5 @@
-import { RotateCcw } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ChevronDown, Minus, Plus, RotateCcw } from 'lucide-react';
 import { navCategories } from '../../data/categories';
 import { MAX_PRICE } from '../../data/products';
 import { formatPrice } from '../../utils/helpers';
@@ -7,15 +8,47 @@ const FILTERABLE = navCategories.filter(
   (c) => !['home', 'contact', 'services', 'offers'].includes(c.id)
 );
 
-export default function ProductFilter({ filters, brands = [], maxPrice = MAX_PRICE, onChange, onClear }) {
+export default function ProductFilter({
+  filters,
+  brands = [],
+  maxPrice = MAX_PRICE,
+  onChange,
+  onClear,
+  onFilterApplied,
+}) {
+  const [categoryOpen, setCategoryOpen] = useState(false);
+  const [brandOpen, setBrandOpen] = useState(false);
+  const [draftFilters, setDraftFilters] = useState(filters);
+
+  useEffect(() => {
+    setDraftFilters(filters);
+  }, [filters]);
+
+  const selectCategory = (category) => {
+    setDraftFilters((current) => ({ ...current, category }));
+    setCategoryOpen(false);
+  };
+
   const toggleBrand = (brand) => {
-    const isSelected = filters.brands.some(
+    const isSelected = draftFilters.brands.some(
       (selectedBrand) => selectedBrand.trim().toLowerCase() === brand.trim().toLowerCase()
     );
     const next = isSelected
-      ? filters.brands.filter((b) => b.trim().toLowerCase() !== brand.trim().toLowerCase())
-      : [...filters.brands, brand];
-    onChange({ ...filters, brands: next });
+      ? draftFilters.brands.filter((b) => b.trim().toLowerCase() !== brand.trim().toLowerCase())
+      : [...draftFilters.brands, brand];
+    setDraftFilters((current) => ({ ...current, brands: next }));
+  };
+
+  const changePrice = (nextPrice) => {
+    const price = Math.min(maxPrice, Math.max(5000, nextPrice));
+    setDraftFilters((current) => ({ ...current, maxPrice: price }));
+  };
+
+  const applyFilters = () => {
+    onChange(draftFilters);
+    setCategoryOpen(false);
+    setBrandOpen(false);
+    onFilterApplied?.();
   };
 
   return (
@@ -37,16 +70,22 @@ export default function ProductFilter({ filters, brands = [], maxPrice = MAX_PRI
       {/* Category */}
       <fieldset className="border-t border-slate-100 pt-4">
         <legend className="sr-only">Category</legend>
-        <h3 className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-500">
-          Category
-        </h3>
-        <ul className="space-y-1">
+        <button
+          type="button"
+          onClick={() => setCategoryOpen((open) => !open)}
+          aria-expanded={categoryOpen}
+          className="flex w-full items-center justify-between py-1 text-left text-xs font-bold uppercase tracking-wider text-slate-500 transition hover:text-primary"
+        >
+          <span>Category{draftFilters.category !== 'all' ? `: ${navCategories.find((cat) => cat.id === draftFilters.category)?.label || draftFilters.category}` : ''}</span>
+          <ChevronDown size={16} className={`transition-transform ${categoryOpen ? 'rotate-180' : ''}`} />
+        </button>
+        {categoryOpen && <ul className="mt-2.5 space-y-1">
           <li>
             <button
               type="button"
-              onClick={() => onChange({ ...filters, category: 'all' })}
+              onClick={() => selectCategory('all')}
               className={`w-full rounded-lg px-3 py-1.5 text-left text-sm transition ${
-                filters.category === 'all'
+                draftFilters.category === 'all'
                   ? 'bg-secondary/10 font-semibold text-secondary'
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
@@ -58,9 +97,9 @@ export default function ProductFilter({ filters, brands = [], maxPrice = MAX_PRI
             <li key={cat.id}>
               <button
                 type="button"
-                onClick={() => onChange({ ...filters, category: cat.id })}
+                onClick={() => selectCategory(cat.id)}
                 className={`w-full rounded-lg px-3 py-1.5 text-left text-sm transition ${
-                  filters.category === cat.id
+                  draftFilters.category === cat.id
                     ? 'bg-secondary/10 font-semibold text-secondary'
                     : 'text-slate-600 hover:bg-slate-50'
                 }`}
@@ -69,22 +108,29 @@ export default function ProductFilter({ filters, brands = [], maxPrice = MAX_PRI
               </button>
             </li>
           ))}
-        </ul>
+        </ul>}
       </fieldset>
 
       {/* Brand */}
       <fieldset className="mt-5 border-t border-slate-100 pt-4">
         <legend className="sr-only">Brand</legend>
-        <h3 className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-500">
-          Brand
-        </h3>
-        <ul className="space-y-2">
+        <button
+          type="button"
+          onClick={() => setBrandOpen((open) => !open)}
+          aria-expanded={brandOpen}
+          className="flex w-full items-center justify-between py-1 text-left text-xs font-bold uppercase tracking-wider text-slate-500 transition hover:text-primary"
+        >
+          <span>Brand{draftFilters.brands.length ? ` (${draftFilters.brands.length})` : ''}</span>
+          <ChevronDown size={16} className={`transition-transform ${brandOpen ? 'rotate-180' : ''}`} />
+        </button>
+        {brandOpen && <div className="mt-2.5">
+          <ul className="space-y-2">
           {brands.map((brand) => (
             <li key={brand}>
               <label className="flex cursor-pointer items-center gap-2.5 text-sm text-slate-600">
                 <input
                   type="checkbox"
-                  checked={filters.brands.some(
+                  checked={draftFilters.brands.some(
                     (selectedBrand) => selectedBrand.trim().toLowerCase() === brand.trim().toLowerCase()
                   )}
                   onChange={() => toggleBrand(brand)}
@@ -94,7 +140,8 @@ export default function ProductFilter({ filters, brands = [], maxPrice = MAX_PRI
               </label>
             </li>
           ))}
-        </ul>
+          </ul>
+        </div>}
       </fieldset>
 
       {/* Price */}
@@ -107,19 +154,47 @@ export default function ProductFilter({ filters, brands = [], maxPrice = MAX_PRI
           type="range"
           min="5000"
           max={maxPrice}
-          step="1000"
-          value={filters.maxPrice}
-          onChange={(e) => onChange({ ...filters, maxPrice: Number(e.target.value) })}
+          step="5000"
+          value={draftFilters.maxPrice}
+          onChange={(e) => changePrice(Number(e.target.value))}
           aria-label="Maximum price"
           className="w-full accent-secondary"
         />
-        <div className="mt-1 flex justify-between text-xs text-slate-500">
+        <div className="mt-2 flex items-center justify-between gap-2 text-xs text-slate-500">
           <span>{formatPrice(5000)}</span>
-          <span className="font-semibold text-primary">
-            Up to {formatPrice(filters.maxPrice)}
-          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => changePrice(draftFilters.maxPrice - 5000)}
+              disabled={draftFilters.maxPrice <= 5000}
+              aria-label="Decrease maximum price by ₹5,000"
+              className="rounded-md border border-slate-200 p-1 text-primary transition hover:border-secondary hover:text-secondary disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Minus size={14} />
+            </button>
+            <span className="font-semibold text-primary">
+            Up to {formatPrice(draftFilters.maxPrice)}
+            </span>
+            <button
+              type="button"
+              onClick={() => changePrice(draftFilters.maxPrice + 5000)}
+              disabled={draftFilters.maxPrice >= maxPrice}
+              aria-label="Increase maximum price by ₹5,000"
+              className="rounded-md border border-slate-200 p-1 text-primary transition hover:border-secondary hover:text-secondary disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Plus size={14} />
+            </button>
+          </div>
         </div>
       </fieldset>
+
+      <button
+        type="button"
+        onClick={applyFilters}
+        className="mt-6 w-full rounded-lg bg-secondary px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-primary"
+      >
+        Apply Filters
+      </button>
     </div>
   );
 }

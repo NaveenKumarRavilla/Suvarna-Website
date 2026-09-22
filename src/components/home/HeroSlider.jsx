@@ -204,7 +204,7 @@ export default function HeroSlider() {
 
           <div className="relative grid h-full md:grid-cols-2">
             <div
-              className={`flex flex-col justify-center p-6 sm:p-10 ${
+              className={`relative z-10 flex flex-col justify-center p-6 sm:p-10 ${
                 i === index ? 'animate-slide-in' : ''
               }`}
             >
@@ -223,9 +223,9 @@ export default function HeroSlider() {
                 </Button>
               </div>
             </div>
-            <div className="hidden items-center justify-center p-8 md:flex">
+            <div className="absolute inset-0 flex items-center justify-center opacity-30 md:relative md:inset-auto md:p-8 md:opacity-100">
               {slide.mediaType === 'video' || slide.video ? (
-                <div className="relative h-[260px] w-full overflow-hidden rounded-xl shadow-2xl ring-1 ring-white/20 lg:h-[300px]">
+                <div className="relative h-full w-full overflow-hidden md:h-[260px] md:rounded-xl md:shadow-2xl md:ring-1 md:ring-white/20 lg:h-[300px]">
                   <video
                     key={`${slide.id}-${index}`}
                     ref={(el) => {
@@ -250,7 +250,7 @@ export default function HeroSlider() {
                         });
                       }
                     }}
-                    className="h-full w-full object-cover"
+                  className="h-full w-full object-cover"
                   />
                   <div className="absolute inset-0 bg-gradient-to-r from-slate-900/30 via-transparent to-slate-900/20" />
                 </div>
@@ -260,7 +260,7 @@ export default function HeroSlider() {
                   alt={slide.title}
                   loading={i === 0 ? 'eager' : 'lazy'}
                   onError={handleImgError}
-                  className="max-h-[300px] w-full rounded-xl object-cover shadow-2xl ring-1 ring-white/20 lg:max-h-[340px]"
+                  className="h-full w-full object-cover md:max-h-[300px] md:rounded-xl md:shadow-2xl md:ring-1 md:ring-white/20 lg:max-h-[340px]"
                 />
               )}
             </div>

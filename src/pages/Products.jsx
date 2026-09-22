@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Filter, X } from 'lucide-react';
-import { MAX_PRICE } from '../data/products';
 import { useAdmin } from '../context/AdminContext';
 import { categoryLabel } from '../data/categories';
 import { calcDiscount } from '../utils/helpers';
 import ProductGrid from '../components/products/ProductGrid';
 import ProductFilter from '../components/products/ProductFilter';
 
-const defaultFilters = { category: 'all', brands: [], maxPrice: MAX_PRICE };
+const MAX_FILTER_PRICE = 500000;
+const defaultFilters = { category: 'all', brands: [], maxPrice: MAX_FILTER_PRICE };
 
 const normalizeFilterValue = (value = '') => String(value || '').trim().toLowerCase();
 
@@ -21,15 +21,10 @@ export default function Products() {
   const search = (searchParams.get('search') || '').toLowerCase();
   const urlCategory = searchParams.get('category') || 'all';
   const offersOnly = searchParams.get('offers') === 'true';
-  const catalogMaxPrice = useMemo(
-    () => Math.max(MAX_PRICE, ...products.map((product) => Number(product.price) || 0)),
-    [products]
-  );
-
   const [filters, setFilters] = useState({
     ...defaultFilters,
     category: urlCategory,
-    maxPrice: catalogMaxPrice,
+    maxPrice: MAX_FILTER_PRICE,
   });
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
@@ -43,8 +38,8 @@ export default function Products() {
   );
 
   useEffect(() => {
-    setFilters((f) => ({ ...f, category: urlCategory, maxPrice: catalogMaxPrice }));
-  }, [urlCategory, catalogMaxPrice]);
+    setFilters((f) => ({ ...f, category: urlCategory, maxPrice: MAX_FILTER_PRICE }));
+  }, [urlCategory]);
 
   const filtered = useMemo(
     () =>
@@ -102,9 +97,13 @@ export default function Products() {
             <ProductFilter
               filters={filters}
               brands={availableBrands}
-              maxPrice={catalogMaxPrice}
+              maxPrice={MAX_FILTER_PRICE}
               onChange={setFilters}
-              onClear={() => setFilters({ ...defaultFilters, maxPrice: catalogMaxPrice })}
+              onFilterApplied={() => setMobileFiltersOpen(false)}
+              onClear={() => {
+                setFilters(defaultFilters);
+                setMobileFiltersOpen(false);
+              }}
             />
           </div>
         </aside>
@@ -112,7 +111,7 @@ export default function Products() {
           <ProductGrid
             products={filtered}
             colsClass="xl:grid-cols-3 2xl:grid-cols-4"
-            onReset={() => setFilters({ ...defaultFilters, maxPrice: catalogMaxPrice })}
+            onReset={() => setFilters(defaultFilters)}
           />
         </main>
       </div>
