@@ -19,6 +19,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Account from './pages/Account';
 import Contact from './pages/Contact';
+import PolicyPage from './pages/PolicyPage';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminCategories from './pages/admin/AdminCategories';
@@ -61,6 +62,10 @@ export default function App() {
                     <Route path="/register" element={<Register />} />
                     <Route path="/account" element={<Account />} />
                     <Route path="/contact" element={<Contact />} />
+                    <Route path="/shipping-policy" element={<PolicyPage slug="shipping" />} />
+                    <Route path="/return-policy" element={<PolicyPage slug="returns" />} />
+                    <Route path="/privacy-policy" element={<PolicyPage slug="privacy" />} />
+                    <Route path="/terms-conditions" element={<PolicyPage slug="terms" />} />
                     <Route path="/wishlist" element={<WishlistPage />} />
                     <Route path="/admin/login" element={<AdminLogin />} />
                     <Route path="/admin" element={<AdminLayout />}>

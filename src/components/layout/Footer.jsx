@@ -37,10 +37,10 @@ const columns = [
     title: 'Customer Support',
     links: [
       { label: 'Contact Us', to: '/contact' },
-      { label: 'Shipping Policy', to: '/contact' },
-      { label: 'Return Policy', to: '/contact' },
-      { label: 'Privacy Policy', to: '/contact' },
-      { label: 'Terms & Conditions', to: '/contact' },
+      { label: 'Shipping Policy', to: '/shipping-policy' },
+      { label: 'Return Policy', to: '/return-policy' },
+      { label: 'Privacy Policy', to: '/privacy-policy' },
+      { label: 'Terms & Conditions', to: '/terms-conditions' },
     ],
   },
 ];

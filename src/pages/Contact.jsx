@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Phone, Mail, MapPin, Clock, MessageCircle, Send, CheckCircle2 } from 'lucide-react';
 import { COMPANY, whatsappLink } from '../utils/helpers';
 import { useAdmin } from '../context/AdminContext';
@@ -31,6 +32,13 @@ const infoCards = [
 
 const inputCls =
   'w-full rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-700 outline-none transition focus:border-secondary focus:bg-white focus:ring-2 focus:ring-secondary/20';
+
+const policyLinks = [
+  { label: 'Shipping Policy', to: '/shipping-policy' },
+  { label: 'Return Policy', to: '/return-policy' },
+  { label: 'Privacy Policy', to: '/privacy-policy' },
+  { label: 'Terms & Conditions', to: '/terms-conditions' },
+];
 
 export default function Contact() {
   const [sent, setSent] = useState(false);
@@ -83,6 +91,24 @@ export default function Contact() {
           );
         })}
       </div>
+
+      <section className="mt-10 rounded-xl bg-white p-6 shadow-card sm:p-8">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-bold text-primary">Company Policies</h2>
+          <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Customer commitments</span>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {policyLinks.map(({ label, to }) => (
+            <Link
+              key={label}
+              to={to}
+              className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-primary transition hover:border-secondary hover:bg-secondary/5 hover:text-secondary"
+            >
+              {label}
+            </Link>
+          ))}
+        </div>
+      </section>
 
       <div className="mt-10 grid gap-8 lg:grid-cols-2">
         {/* Form */}

@@ -25,7 +25,7 @@ export default function ProductCard({ product }) {
   };
 
   return (
-    <article className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-b from-white to-slate-50 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-secondary/40 hover:shadow-card-hover">
+    <article className="group flex h-full w-full min-w-[220px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-b from-white to-slate-50 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-secondary/40 hover:shadow-card-hover md:min-w-0">
       {/* Image */}
       <div className="relative overflow-hidden border-b border-slate-200 bg-slate-50 p-2">
         <Link to={`/product/${product.id}`} aria-label={`View ${product.name}`} className="block overflow-hidden rounded-xl bg-white">
