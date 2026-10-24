@@ -24,6 +24,7 @@ const emptyForm = {
   image: '',
   video: '',
   mediaType: 'image',
+  mediaFit: 'contain',
 };
 const gradients = [
   { label: 'Navy → Blue', value: 'from-[#04122B] via-[#071B3D] to-[#0D5DB8]' },
@@ -57,6 +58,7 @@ export default function AdminBanners() {
       image: b.image || '',
       video: b.video || '',
       mediaType: b.mediaType || (b.video ? 'video' : 'image'),
+      mediaFit: b.mediaFit || 'contain',
     });
     setVideoError('');
     setModalOpen(true);
@@ -246,6 +248,16 @@ export default function AdminBanners() {
                 </button>
               </div>
             </div>
+
+            <Field label="How should the banner media fit?">
+              <select value={form.mediaFit} onChange={set('mediaFit')} className={inputCls}>
+                <option value="contain">Show full image / video (no crop)</option>
+                <option value="cover">Fill the banner area (may crop edges)</option>
+              </select>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Use “Show full” to preserve the complete uploaded media. Empty space is kept around a different aspect ratio.
+              </p>
+            </Field>
 
             {form.mediaType === 'image' ? (
               <ImageUpload

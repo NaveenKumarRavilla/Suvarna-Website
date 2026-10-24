@@ -71,6 +71,11 @@ export default function Products() {
       ? `Results for "${searchParams.get('search')}"`
       : categoryLabel(filters.category);
 
+  const handleFiltersApplied = () => {
+    setMobileFiltersOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
     <div className="mx-auto max-w-8xl px-4 py-8">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -83,7 +88,7 @@ export default function Products() {
         <button
           type="button"
           onClick={() => setMobileFiltersOpen((o) => !o)}
-          className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-secondary hover:text-secondary lg:hidden"
+          className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-secondary hover:text-secondary"
           aria-expanded={mobileFiltersOpen}
         >
           {mobileFiltersOpen ? <X size={16} /> : <Filter size={16} />}
@@ -91,15 +96,15 @@ export default function Products() {
         </button>
       </div>
 
-      <div className="lg:grid lg:grid-cols-[260px_1fr] lg:gap-8">
-        <aside className={`mb-6 lg:mb-0 lg:block ${mobileFiltersOpen ? 'block' : 'hidden'}`}>
+      <div className="space-y-6 lg:grid lg:grid-cols-[340px_1fr] lg:gap-8 lg:space-y-0">
+        <aside className={mobileFiltersOpen ? 'block' : 'hidden'}>
           <div className="lg:sticky lg:top-24">
             <ProductFilter
               filters={filters}
               brands={availableBrands}
               maxPrice={MAX_FILTER_PRICE}
               onChange={setFilters}
-              onFilterApplied={() => setMobileFiltersOpen(false)}
+              onFilterApplied={handleFiltersApplied}
               onClear={() => {
                 setFilters(defaultFilters);
                 setMobileFiltersOpen(false);
@@ -107,7 +112,7 @@ export default function Products() {
             />
           </div>
         </aside>
-        <main>
+        <main className={mobileFiltersOpen ? '' : 'lg:col-span-2'}>
           <ProductGrid
             products={filtered}
             colsClass="xl:grid-cols-3 2xl:grid-cols-4"

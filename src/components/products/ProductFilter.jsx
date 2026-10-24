@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, Minus, Plus, RotateCcw } from 'lucide-react';
+import { Minus, Plus, RotateCcw } from 'lucide-react';
 import { navCategories } from '../../data/categories';
 import { MAX_PRICE } from '../../data/products';
 import { formatPrice } from '../../utils/helpers';
@@ -16,8 +16,6 @@ export default function ProductFilter({
   onClear,
   onFilterApplied,
 }) {
-  const [categoryOpen, setCategoryOpen] = useState(false);
-  const [brandOpen, setBrandOpen] = useState(false);
   const [draftFilters, setDraftFilters] = useState(filters);
 
   useEffect(() => {
@@ -26,7 +24,6 @@ export default function ProductFilter({
 
   const selectCategory = (category) => {
     setDraftFilters((current) => ({ ...current, category }));
-    setCategoryOpen(false);
   };
 
   const toggleBrand = (brand) => {
@@ -46,8 +43,6 @@ export default function ProductFilter({
 
   const applyFilters = () => {
     onChange(draftFilters);
-    setCategoryOpen(false);
-    setBrandOpen(false);
     onFilterApplied?.();
   };
 
@@ -69,79 +64,57 @@ export default function ProductFilter({
 
       {/* Category */}
       <fieldset className="border-t border-slate-100 pt-4">
-        <legend className="sr-only">Category</legend>
-        <button
-          type="button"
-          onClick={() => setCategoryOpen((open) => !open)}
-          aria-expanded={categoryOpen}
-          className="flex w-full items-center justify-between py-1 text-left text-xs font-bold uppercase tracking-wider text-slate-500 transition hover:text-primary"
-        >
-          <span>Category{draftFilters.category !== 'all' ? `: ${navCategories.find((cat) => cat.id === draftFilters.category)?.label || draftFilters.category}` : ''}</span>
-          <ChevronDown size={16} className={`transition-transform ${categoryOpen ? 'rotate-180' : ''}`} />
-        </button>
-        {categoryOpen && <ul className="mt-2.5 space-y-1">
+        <legend className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-500">Category</legend>
+        <ul className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-4 lg:grid-cols-3">
           <li>
-            <button
-              type="button"
-              onClick={() => selectCategory('all')}
-              className={`w-full rounded-lg px-3 py-1.5 text-left text-sm transition ${
-                draftFilters.category === 'all'
-                  ? 'bg-secondary/10 font-semibold text-secondary'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs leading-tight text-slate-600">
+              <input
+                type="checkbox"
+                checked={draftFilters.category === 'all'}
+                onChange={() => selectCategory('all')}
+                className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 accent-secondary"
+              />
               All Products
-            </button>
+            </label>
           </li>
           {FILTERABLE.map((cat) => (
             <li key={cat.id}>
-              <button
-                type="button"
-                onClick={() => selectCategory(cat.id)}
-                className={`w-full rounded-lg px-3 py-1.5 text-left text-sm transition ${
-                  draftFilters.category === cat.id
-                    ? 'bg-secondary/10 font-semibold text-secondary'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs leading-tight text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={draftFilters.category === cat.id}
+                  onChange={() => selectCategory(cat.id)}
+                  className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 accent-secondary"
+                />
                 {cat.label}
-              </button>
+              </label>
             </li>
           ))}
-        </ul>}
+        </ul>
       </fieldset>
 
       {/* Brand */}
       <fieldset className="mt-5 border-t border-slate-100 pt-4">
-        <legend className="sr-only">Brand</legend>
-        <button
-          type="button"
-          onClick={() => setBrandOpen((open) => !open)}
-          aria-expanded={brandOpen}
-          className="flex w-full items-center justify-between py-1 text-left text-xs font-bold uppercase tracking-wider text-slate-500 transition hover:text-primary"
-        >
-          <span>Brand{draftFilters.brands.length ? ` (${draftFilters.brands.length})` : ''}</span>
-          <ChevronDown size={16} className={`transition-transform ${brandOpen ? 'rotate-180' : ''}`} />
-        </button>
-        {brandOpen && <div className="mt-2.5">
-          <ul className="space-y-2">
+        <legend className="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-500">
+          Brand{draftFilters.brands.length ? ` (${draftFilters.brands.length})` : ''}
+        </legend>
+        <ul className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-4 lg:grid-cols-3">
           {brands.map((brand) => (
             <li key={brand}>
-              <label className="flex cursor-pointer items-center gap-2.5 text-sm text-slate-600">
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs leading-tight text-slate-600">
                 <input
                   type="checkbox"
                   checked={draftFilters.brands.some(
                     (selectedBrand) => selectedBrand.trim().toLowerCase() === brand.trim().toLowerCase()
                   )}
                   onChange={() => toggleBrand(brand)}
-                  className="h-4 w-4 rounded border-slate-300 accent-secondary"
+                  className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 accent-secondary"
                 />
                 {brand}
               </label>
             </li>
           ))}
-          </ul>
-        </div>}
+        </ul>
       </fieldset>
 
       {/* Price */}

@@ -188,7 +188,7 @@ export default function HeroSlider() {
     <section
       ref={sliderRef}
       aria-label="Featured promotions"
-      className="group/slider relative h-[320px] overflow-hidden rounded-2xl shadow-card sm:h-[380px] lg:h-[440px]"
+      className="group/slider relative h-[320px] overflow-hidden rounded-2xl shadow-card sm:h-[380px] lg:h-[470px]"
     >
       {heroSlides.map((slide, i) => (
         <div
@@ -202,7 +202,7 @@ export default function HeroSlider() {
           <div className="absolute -right-16 -top-16 h-64 w-64 rounded-full bg-white/5" aria-hidden="true" />
           <div className="absolute -bottom-20 left-1/3 h-56 w-56 rounded-full bg-accent/10" aria-hidden="true" />
 
-          <div className="relative grid h-full md:grid-cols-2">
+          <div className="relative grid h-full md:grid-cols-[0.85fr_1.15fr]">
             <div
               className={`relative z-10 flex flex-col justify-center p-6 sm:p-10 ${
                 i === index ? 'animate-slide-in' : ''
@@ -223,9 +223,9 @@ export default function HeroSlider() {
                 </Button>
               </div>
             </div>
-            <div className="absolute inset-0 flex items-center justify-center opacity-30 md:relative md:inset-auto md:p-8 md:opacity-100">
+            <div className="absolute inset-0 flex items-center justify-center opacity-30 md:relative md:inset-auto md:p-5 md:opacity-100 lg:p-6">
               {slide.mediaType === 'video' || slide.video ? (
-                <div className="relative h-full w-full overflow-hidden md:h-[260px] md:rounded-xl md:shadow-2xl md:ring-1 md:ring-white/20 lg:h-[300px]">
+                <div className="relative h-full w-full overflow-hidden bg-navy-900/20 md:h-[300px] md:rounded-xl md:shadow-2xl md:ring-1 md:ring-white/20 lg:h-[350px]">
                   <video
                     key={`${slide.id}-${index}`}
                     ref={(el) => {
@@ -250,7 +250,7 @@ export default function HeroSlider() {
                         });
                       }
                     }}
-                  className="h-full w-full object-cover"
+                  className={`h-full w-full ${slide.mediaFit === 'cover' ? 'object-cover' : 'object-contain'}`}
                   />
                   <div className="absolute inset-0 bg-gradient-to-r from-slate-900/30 via-transparent to-slate-900/20" />
                 </div>
@@ -260,7 +260,7 @@ export default function HeroSlider() {
                   alt={slide.title}
                   loading={i === 0 ? 'eager' : 'lazy'}
                   onError={handleImgError}
-                  className="h-full w-full object-cover md:max-h-[300px] md:rounded-xl md:shadow-2xl md:ring-1 md:ring-white/20 lg:max-h-[340px]"
+                  className={`h-full w-full bg-navy-900/20 ${slide.mediaFit === 'cover' ? 'object-cover' : 'object-contain'} md:max-h-[300px] md:rounded-xl md:shadow-2xl md:ring-1 md:ring-white/20 lg:max-h-[350px]`}
                 />
               )}
             </div>
