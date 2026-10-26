@@ -7,6 +7,7 @@ import {
   Users,
   MessageSquare,
   BadgePercent,
+  FileText,
   FolderTree,
   ArrowRight,
   IndianRupee,
@@ -16,7 +17,7 @@ import { formatPrice } from '../utils/helpers';
 import { StatusBadge } from '../components/admin/AdminForm';
 
 export default function AdminDashboard() {
-  const { products, banners, videos, orders, customers, enquiries, offers } = useAdmin();
+  const { products, banners, promoCards, videos, orders, customers, enquiries, offers, policies } = useAdmin();
 
   const revenue = orders
     .filter((o) => o.status !== 'Cancelled')
@@ -25,11 +26,13 @@ export default function AdminDashboard() {
   const stats = [
     { label: 'Products', value: products.length, icon: Package, to: '/admin/products', color: 'bg-blue-100 text-blue-600' },
     { label: 'Banners', value: banners.length, icon: Images, to: '/admin/banners', color: 'bg-violet-100 text-violet-600' },
+    { label: 'Promo Cards', value: promoCards.length, icon: Images, to: '/admin/promo-cards', color: 'bg-indigo-100 text-indigo-600' },
     { label: 'Videos', value: videos.length, icon: Youtube, to: '/admin/videos', color: 'bg-rose-100 text-rose-600' },
     { label: 'Orders', value: orders.length, icon: ShoppingBag, to: '/admin/orders', color: 'bg-emerald-100 text-emerald-600' },
     { label: 'Customers', value: customers.length, icon: Users, to: '/admin/customers', color: 'bg-amber-100 text-amber-600' },
     { label: 'Enquiries', value: enquiries.filter((e) => e.status === 'New').length, icon: MessageSquare, to: '/admin/enquiries', color: 'bg-cyan-100 text-cyan-600' },
     { label: 'Active Offers', value: offers.filter((o) => o.active).length, icon: BadgePercent, to: '/admin/offers', color: 'bg-orange-100 text-orange-600' },
+    { label: 'Policies', value: Object.keys(policies).length, icon: FileText, to: '/admin/policies', color: 'bg-fuchsia-100 text-fuchsia-600' },
     { label: 'Categories', value: 8, icon: FolderTree, to: '/admin/categories', color: 'bg-slate-200 text-slate-600' },
   ];
 

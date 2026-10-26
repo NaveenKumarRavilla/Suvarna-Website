@@ -9,7 +9,8 @@ import {
   Linkedin,
   Youtube,
 } from 'lucide-react';
-import { COMPANY, whatsappLink } from '../../utils/helpers';
+import { useAdmin } from '../../context/AdminContext';
+import { getPolicyPath, policyOptions } from '../../data/policies';
 import logo from '../../assets/suvarna-logo.svg';
 
 const columns = [
@@ -37,10 +38,6 @@ const columns = [
     title: 'Customer Support',
     links: [
       { label: 'Contact Us', to: '/contact' },
-      { label: 'Shipping Policy', to: '/shipping-policy' },
-      { label: 'Return Policy', to: '/return-policy' },
-      { label: 'Privacy Policy', to: '/privacy-policy' },
-      { label: 'Terms & Conditions', to: '/terms-conditions' },
     ],
   },
 ];
@@ -53,13 +50,22 @@ const socials = [
 ];
 
 export default function Footer() {
+  const { settings, policies } = useAdmin();
+  const policyLinks = [
+    ...policyOptions.map(({ id }) => id).filter((id) => policies[id]),
+    ...Object.keys(policies).filter((id) => !policyOptions.some((option) => option.id === id)),
+  ].map((id) => ({ label: policies[id].title, to: getPolicyPath(id) }));
+  const phoneHref = String(settings.phone || '').replace(/\s/g, '');
+  const whatsappNumber = String(settings.whatsapp || '').replace(/\D/g, '');
+  const whatsappHref = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(`Hello ${settings.storeName}, I need assistance.`)}`;
+
   return (
     <footer className="mt-12 bg-primary text-slate-300">
       <div className="mx-auto grid max-w-8xl grid-cols-1 gap-10 px-4 py-12 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
         {/* Company */}
         <div>
           <Link to="/" className="inline-flex items-center">
-            <img src={logo} alt="Suvarna IT Enterprises" className="h-12 w-auto max-w-[210px] object-contain sm:h-16" />
+            <img src={logo} alt={settings.storeName} className="h-12 w-auto max-w-[210px] object-contain sm:h-16" />
           </Link>
           <p className="mt-4 text-sm leading-relaxed text-slate-400">
             Suvarna IT Enterprises is your trusted partner for laptops, desktops,
@@ -89,7 +95,7 @@ export default function Footer() {
               {col.title}
             </h3>
             <ul className="space-y-2.5">
-              {col.links.map((link) => (
+              {[...col.links, ...(col.title === 'Customer Support' ? policyLinks : [])].map((link) => (
                 <li key={link.label}>
                   <Link
                     to={link.to}
@@ -111,24 +117,24 @@ export default function Footer() {
           <ul className="space-y-3.5 text-sm text-slate-400">
             <li className="flex items-start gap-3">
               <Phone size={16} className="mt-0.5 shrink-0 text-accent" />
-              <a href={`tel:${COMPANY.phone.replace(/\s/g, '')}`} className="transition hover:text-accent">
-                {COMPANY.phone}
+              <a href={`tel:${phoneHref}`} className="transition hover:text-accent">
+                {settings.phone}
               </a>
             </li>
             <li className="flex items-start gap-3">
               <Mail size={16} className="mt-0.5 shrink-0 text-accent" />
-              <a href={`mailto:${COMPANY.email}`} className="transition hover:text-accent">
-                {COMPANY.email}
+              <a href={`mailto:${settings.email}`} className="transition hover:text-accent">
+                {settings.email}
               </a>
             </li>
             <li className="flex items-start gap-3">
               <MapPin size={16} className="mt-0.5 shrink-0 text-accent" />
-              <span>{COMPANY.address}</span>
+              <span>{settings.address}</span>
             </li>
             <li className="flex items-start gap-3">
               <MessageCircle size={16} className="mt-0.5 shrink-0 text-[#25D366]" />
               <a
-                href={whatsappLink('Hello Suvarna IT Enterprises, I need assistance.')}
+                href={whatsappHref}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="transition hover:text-[#25D366]"

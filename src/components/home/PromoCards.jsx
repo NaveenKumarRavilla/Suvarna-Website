@@ -1,11 +1,14 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
-import { promoCards } from '../../data/banners';
+import { useAdmin } from '../../context/AdminContext';
 
 export default function PromoCards() {
+  const { promoCards } = useAdmin();
+  const visibleCards = promoCards.filter((promo) => promo.active !== false);
+
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:h-[440px] lg:grid-cols-1">
-      {promoCards.map((promo) => (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:h-[470px] lg:grid-cols-1">
+      {visibleCards.map((promo) => (
         <Link
           key={promo.id}
           to={promo.link}

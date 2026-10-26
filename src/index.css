@@ -52,3 +52,23 @@
 .animate-slide-in {
   animation: slideIn 0.7s ease both;
 }
+
+@keyframes brandMarquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.brand-marquee-track {
+  animation: brandMarquee 48s linear infinite;
+}
+
+.brand-marquee:hover .brand-marquee-track {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-marquee-track {
+    animation: none;
+  }
+}

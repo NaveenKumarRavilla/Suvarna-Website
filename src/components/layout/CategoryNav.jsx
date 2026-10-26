@@ -1,18 +1,18 @@
 import { Link, useLocation } from 'react-router-dom';
-import { navCategories } from '../../data/categories';
+import { navCategories, normalizeCategoryId } from '../../data/categories';
 import { categoryLink } from './MobileHeader';
 
 export default function CategoryNav() {
   const location = useLocation();
   const params = new URLSearchParams(location.search);
-  const activeCategory = params.get('category');
+  const activeCategory = normalizeCategoryId(params.get('category'));
   const offersActive = params.get('offers') === 'true';
 
   const isActive = (cat) => {
     if (cat.id === 'home') return location.pathname === '/';
     if (cat.id === 'offers') return location.pathname === '/products' && offersActive;
     if (cat.path) return location.pathname === cat.path;
-    return location.pathname === '/products' && activeCategory === cat.id;
+    return location.pathname === '/products' && activeCategory === normalizeCategoryId(cat.id);
   };
 
   return (

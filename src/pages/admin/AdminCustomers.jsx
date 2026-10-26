@@ -56,7 +56,9 @@ export default function AdminCustomers() {
                       c.provider === 'google' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'
                     }`}>
                       {c.provider === 'google' && <ShieldCheck size={11} />}
-                      {c.provider === 'google' ? 'Google' : 'Email'}
+                      {c.providers?.length
+                        ? c.providers.map((provider) => provider === 'google' ? 'Google' : 'Email').join(' + ')
+                        : c.provider === 'google' ? 'Google' : 'Email'}
                     </span>
                   </td>
                   <td className={tdCls}>

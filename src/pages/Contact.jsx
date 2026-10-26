@@ -1,48 +1,31 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Phone, Mail, MapPin, Clock, MessageCircle, Send, CheckCircle2 } from 'lucide-react';
-import { COMPANY, whatsappLink } from '../utils/helpers';
 import { useAdmin } from '../context/AdminContext';
+import { getPolicyPath, policyOptions } from '../data/policies';
 import Button from '../components/common/Button';
 
-const infoCards = [
-  {
-    icon: Phone,
-    title: 'Call Us',
-    lines: [COMPANY.phone, COMPANY.hours],
-    href: `tel:${COMPANY.phone.replace(/\s/g, '')}`,
-  },
-  {
-    icon: Mail,
-    title: 'Email Us',
-    lines: [COMPANY.email, 'We reply within 24 hours'],
-    href: `mailto:${COMPANY.email}`,
-  },
-  {
-    icon: MapPin,
-    title: 'Visit Us',
-    lines: [COMPANY.address],
-  },
-  {
-    icon: Clock,
-    title: 'Business Hours',
-    lines: [COMPANY.hours, 'Sunday: Closed'],
-  },
-];
+const BUSINESS_HOURS = 'Mon - Sat: 10:00 AM - 8:00 PM';
 
 const inputCls =
   'w-full rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-700 outline-none transition focus:border-secondary focus:bg-white focus:ring-2 focus:ring-secondary/20';
 
-const policyLinks = [
-  { label: 'Shipping Policy', to: '/shipping-policy' },
-  { label: 'Return Policy', to: '/return-policy' },
-  { label: 'Privacy Policy', to: '/privacy-policy' },
-  { label: 'Terms & Conditions', to: '/terms-conditions' },
-];
-
 export default function Contact() {
   const [sent, setSent] = useState(false);
-  const { addEnquiry } = useAdmin();
+  const { addEnquiry, settings, policies } = useAdmin();
+  const policyLinks = [
+    ...policyOptions.map(({ id }) => id).filter((id) => policies[id]),
+    ...Object.keys(policies).filter((id) => !policyOptions.some((option) => option.id === id)),
+  ].map((id) => ({ label: policies[id].title, to: getPolicyPath(id) }));
+  const phoneHref = String(settings.phone || '').replace(/\s/g, '');
+  const whatsappNumber = String(settings.whatsapp || '').replace(/\D/g, '');
+  const whatsappHref = (message) => `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
+  const infoCards = [
+    { icon: Phone, title: 'Call Us', lines: [settings.phone, BUSINESS_HOURS], href: `tel:${phoneHref}` },
+    { icon: Mail, title: 'Email Us', lines: [settings.email, 'We reply within 24 hours'], href: `mailto:${settings.email}` },
+    { icon: MapPin, title: 'Visit Us', lines: [settings.address] },
+    { icon: Clock, title: 'Business Hours', lines: [BUSINESS_HOURS, 'Sunday: Closed'] },
+  ];
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -178,7 +161,7 @@ export default function Contact() {
           </p>
           <div className="mt-6">
             <Button
-              href={whatsappLink('Hello Suvarna IT Enterprises, I have a question.')}
+              href={whatsappHref(`Hello ${settings.storeName}, I have a question.`)}
               target="_blank"
               rel="noopener noreferrer"
               variant="whatsapp"
@@ -189,7 +172,7 @@ export default function Contact() {
             </Button>
           </div>
           <p className="mt-6 text-xs text-slate-300">
-            {COMPANY.hours} &bull; Response within minutes during business hours
+            {BUSINESS_HOURS} &bull; Response within minutes during business hours
           </p>
         </section>
       </div>

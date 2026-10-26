@@ -10,11 +10,12 @@ const inputCls = 'w-full bg-transparent py-2.5 text-sm text-slate-700 outline-no
 
 export default function Login() {
   const navigate = useNavigate();
-  const { login, loginWithGoogle } = useAuth();
+  const { login, loginWithGoogle, googleReady, googleLoadError } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -23,9 +24,13 @@ export default function Login() {
     else setError(res.error);
   };
 
-  const handleGoogle = () => {
-    loginWithGoogle();
-    navigate('/');
+  const handleGoogle = async () => {
+    setError('');
+    setGoogleLoading(true);
+    const result = await loginWithGoogle();
+    setGoogleLoading(false);
+    if (result.ok) navigate('/');
+    else setError(result.error);
   };
 
   return (
@@ -96,7 +101,10 @@ export default function Login() {
               <input type="checkbox" className="h-3.5 w-3.5 accent-secondary" />
               Remember me
             </label>
-            <Link to="/login" className="font-semibold text-secondary hover:underline">
+            <Link
+              to={identifier.trim() ? `/forgot-password?email=${encodeURIComponent(identifier.trim())}` : '/forgot-password'}
+              className="font-semibold text-secondary hover:underline"
+            >
               Forgot password?
             </Link>
           </div>
@@ -117,10 +125,14 @@ export default function Login() {
           size="lg"
           className="w-full"
           onClick={handleGoogle}
+          disabled={googleLoading || (!googleReady && !googleLoadError)}
         >
           <Chrome size={18} />
-          Continue with Google
+          {googleLoading ? 'Connecting to Google...' : googleReady ? 'Continue with Google' : googleLoadError ? 'Google sign-in unavailable' : 'Loading Google sign-in...'}
         </Button>
+        {googleLoadError && (
+          <p role="alert" className="mt-2 text-xs font-medium text-red-600">{googleLoadError}</p>
+        )}
 
         <p className="mt-6 text-center text-sm text-slate-500">
           New to Suvarna?{' '}

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { products as seedProducts } from '../data/products';
-import { heroSlides as seedBanners } from '../data/banners';
+import { heroSlides as seedBanners, promoCards as seedPromoCards } from '../data/banners';
+import { defaultPolicies } from '../data/policies';
 import { sendNotification } from '../utils/notifications';
 
 const AdminContext = createContext(null);
@@ -14,12 +15,14 @@ export const ADMIN_PERMISSIONS = [
   { id: 'categories', label: 'Manage Categories' },
   { id: 'products', label: 'Manage Products' },
   { id: 'banners', label: 'Manage Banners / Sliders' },
+  { id: 'promo-cards', label: 'Manage Promo Cards' },
   { id: 'videos', label: 'Manage Videos' },
   { id: 'orders', label: 'Manage Orders' },
   { id: 'customers', label: 'Manage Customers' },
   { id: 'enquiries', label: 'Manage Enquiries' },
   { id: 'offers', label: 'Manage Offers' },
   { id: 'settings', label: 'Manage Settings' },
+  { id: 'policies', label: 'Manage Policies' },
 ];
 
 export const ALL_ADMIN_PERMISSIONS = ADMIN_PERMISSIONS.map((permission) => permission.id);
@@ -103,12 +106,14 @@ const seedStore = () => ({
   }],
   products: seedProducts,
   banners: seedBanners,
+  promoCards: seedPromoCards,
   offers: seedOffers,
   videos: seedVideos,
   orders: [],
   customers: seedCustomers,
   enquiries: [],
   settings: defaultSettings,
+  policies: defaultPolicies,
 });
 
 const loadStore = () => {
@@ -130,12 +135,14 @@ const loadStore = () => {
       admins,
       products: Array.isArray(base.products) ? base.products : seedStore().products,
       banners: dedupeBanners(Array.isArray(base.banners) ? base.banners : seedStore().banners),
+      promoCards: Array.isArray(base.promoCards) ? base.promoCards : seedPromoCards,
       offers: Array.isArray(base.offers) ? base.offers : seedStore().offers,
       videos: Array.isArray(base.videos) ? base.videos : seedStore().videos,
       orders: Array.isArray(base.orders) ? base.orders : [],
       customers: Array.isArray(base.customers) ? base.customers : seedCustomers,
       enquiries: Array.isArray(base.enquiries) ? base.enquiries : [],
       settings: { ...seedStore().settings, ...(base.settings || {}) },
+      policies: { ...defaultPolicies, ...(base.policies || {}) },
     };
   } catch {
     return seedStore();
@@ -326,6 +333,20 @@ export function AdminProvider({ children }) {
       deleteBanner: (id) =>
         setStore((s) => ({ ...s, banners: dedupeBanners(s.banners.filter((b) => b.id !== id)) })),
 
+      promoCards: store.promoCards,
+      addPromoCard: (item) =>
+        setStore((s) => ({
+          ...s,
+          promoCards: [...s.promoCards, { ...item, id: nextId(s.promoCards), active: true }],
+        })),
+      updatePromoCard: (id, patch) =>
+        setStore((s) => ({
+          ...s,
+          promoCards: s.promoCards.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+        })),
+      deletePromoCard: (id) =>
+        setStore((s) => ({ ...s, promoCards: s.promoCards.filter((item) => item.id !== id) })),
+
       offers: store.offers,
       addOffer: (item) =>
         setStore((s) => ({
@@ -398,7 +419,11 @@ export function AdminProvider({ children }) {
             if (existing) {
               existing.name = user.name || existing.name;
               existing.phone = user.phone || existing.phone || '-';
-              existing.provider = user.provider || existing.provider || 'email';
+              existing.providers = [...new Set([
+                ...(existing.providers || (existing.provider ? [existing.provider] : [])),
+                ...(user.providers || (user.provider ? [user.provider] : [])),
+              ])];
+              existing.provider = existing.providers.includes('email') ? 'email' : existing.providers[0] || 'email';
               existing.joined = user.joined || existing.joined;
             } else {
               mergedCustomers.push({
@@ -409,6 +434,7 @@ export function AdminProvider({ children }) {
                 orders: s.orders.filter((o) => normalizeEmail(o.email) === email).length,
                 joined: user.joined,
                 provider: user.provider || 'email',
+                providers: user.providers || [user.provider || 'email'],
               });
             }
           }
@@ -449,6 +475,26 @@ export function AdminProvider({ children }) {
       settings: store.settings,
       updateSettings: (patch) =>
         setStore((s) => ({ ...s, settings: { ...s.settings, ...patch } })),
+
+      policies: store.policies,
+      addPolicy: (id, policy) =>
+        setStore((s) => ({
+          ...s,
+          policies: s.policies[id]
+            ? s.policies
+            : { ...s.policies, [id]: policy },
+        })),
+      updatePolicy: (id, patch) =>
+        setStore((s) => ({
+          ...s,
+          policies: { ...s.policies, [id]: { ...s.policies[id], ...patch } },
+        })),
+      deletePolicy: (id) =>
+        setStore((s) => {
+          const policies = { ...s.policies };
+          delete policies[id];
+          return { ...s, policies };
+        }),
     };
   }, [store, currentUser]);
 

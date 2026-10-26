@@ -17,6 +17,7 @@ export default function ImageUpload({
   minimumHeight = null,
   maximumWidth = null,
   maximumHeight = null,
+  compact = false,
 }) {
   const fileRef = useRef(null);
   const [error, setError] = useState('');
@@ -122,10 +123,10 @@ export default function ImageUpload({
         </div>
       )}
 
-      <div className={`grid ${multiple ? 'grid-cols-2 gap-2 sm:grid-cols-3' : ''}`}>
+      <div className={`grid ${multiple ? (compact ? 'grid-cols-3 gap-2 sm:grid-cols-4' : 'grid-cols-2 gap-2 sm:grid-cols-3') : ''}`}>
         {previewImages.map((image, idx) => (
           <div key={`${image}-${idx}`} className="relative overflow-hidden rounded-lg border border-slate-200 bg-white">
-            <img src={image} alt="Preview" className={multiple ? 'h-28 w-full object-contain p-1' : 'h-36 w-full object-contain p-1'} />
+            <img src={image} alt="Preview" className={multiple ? (compact ? 'h-20 w-full object-contain p-1' : 'h-28 w-full object-contain p-1') : 'h-36 w-full object-contain p-1'} />
             <button
               type="button"
               onClick={() => removeAt(idx)}
@@ -141,7 +142,7 @@ export default function ImageUpload({
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            className="flex h-28 w-full flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 text-slate-500 transition hover:border-secondary hover:text-secondary"
+            className={`flex w-full flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 text-slate-500 transition hover:border-secondary hover:text-secondary ${compact ? 'h-20' : 'h-28'}`}
           >
             <UploadCloud size={20} />
             <span className="text-[11px] font-semibold">Add image</span>

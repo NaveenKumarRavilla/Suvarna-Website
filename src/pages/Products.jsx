@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Filter, X } from 'lucide-react';
 import { useAdmin } from '../context/AdminContext';
-import { categoryLabel } from '../data/categories';
+import { categoryLabel, navCategories, normalizeCategoryId } from '../data/categories';
 import { calcDiscount } from '../utils/helpers';
 import ProductGrid from '../components/products/ProductGrid';
 import ProductFilter from '../components/products/ProductFilter';
@@ -11,9 +11,7 @@ const MAX_FILTER_PRICE = 500000;
 const defaultFilters = { category: 'all', brands: [], maxPrice: MAX_FILTER_PRICE };
 
 const normalizeFilterValue = (value = '') => String(value || '').trim().toLowerCase();
-
-const normalizeCategory = (value = '') =>
-  normalizeFilterValue(value).replace(/\s+/g, '-');
+const hiddenCategories = ['home', 'contact', 'services', 'offers'];
 
 export default function Products() {
   const { products } = useAdmin();
@@ -23,10 +21,29 @@ export default function Products() {
   const offersOnly = searchParams.get('offers') === 'true';
   const [filters, setFilters] = useState({
     ...defaultFilters,
-    category: urlCategory,
+    category: normalizeCategoryId(urlCategory),
     maxPrice: MAX_FILTER_PRICE,
   });
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+
+  const availableCategories = useMemo(() => {
+    const categories = new Map(
+      navCategories
+        .filter((category) => !hiddenCategories.includes(category.id))
+        .map((category) => [normalizeCategoryId(category.id), {
+          id: normalizeCategoryId(category.id),
+          label: category.label,
+        }])
+    );
+
+    products.forEach((product) => {
+      const id = normalizeCategoryId(product.category);
+      if (!id || categories.has(id)) return;
+      categories.set(id, { id, label: categoryLabel(id) });
+    });
+
+    return [...categories.values()];
+  }, [products]);
 
   const availableBrands = useMemo(
     () => [...new Map(
@@ -38,7 +55,7 @@ export default function Products() {
   );
 
   useEffect(() => {
-    setFilters((f) => ({ ...f, category: urlCategory, maxPrice: MAX_FILTER_PRICE }));
+    setFilters((f) => ({ ...f, category: normalizeCategoryId(urlCategory), maxPrice: MAX_FILTER_PRICE }));
   }, [urlCategory]);
 
   const filtered = useMemo(
@@ -46,7 +63,7 @@ export default function Products() {
       products.filter((p) => {
         if (
           filters.category !== 'all' &&
-          normalizeCategory(p.category) !== normalizeCategory(filters.category)
+          normalizeCategoryId(p.category) !== normalizeCategoryId(filters.category)
         ) return false;
         if (offersOnly && calcDiscount(p.price, p.oldPrice) < 15) return false;
         if (
@@ -101,6 +118,7 @@ export default function Products() {
           <div className="lg:sticky lg:top-24">
             <ProductFilter
               filters={filters}
+              categories={availableCategories}
               brands={availableBrands}
               maxPrice={MAX_FILTER_PRICE}
               onChange={setFilters}

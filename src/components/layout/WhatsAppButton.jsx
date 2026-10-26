@@ -1,10 +1,14 @@
 import { MessageCircle } from 'lucide-react';
-import { whatsappLink } from '../../utils/helpers';
+import { useAdmin } from '../../context/AdminContext';
 
 export default function WhatsAppButton() {
+  const { settings } = useAdmin();
+  const whatsappNumber = String(settings.whatsapp || '').replace(/\D/g, '');
+  const href = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(`Hello ${settings.storeName}, I am interested in your products.`)}`;
+
   return (
     <a
-      href={whatsappLink('Hello Suvarna IT Enterprises, I am interested in your products.')}
+      href={href}
       target="_blank"
       rel="noopener noreferrer"
       aria-label="Chat with us on WhatsApp"

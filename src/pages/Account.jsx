@@ -36,6 +36,7 @@ export default function Account() {
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState(searchParams.get('tab') || 'profile');
   const [saved, setSaved] = useState(false);
+  const [profileError, setProfileError] = useState('');
 
   const myOrders = useMemo(() => {
     if (!user?.email) return [];
@@ -52,9 +53,10 @@ export default function Account() {
   const handleProfileSave = (e) => {
     e.preventDefault();
     const form = e.currentTarget;
-    updateProfile({ name: form.name.value, phone: form.phone.value });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    const result = updateProfile({ name: form.name.value, phone: form.phone.value });
+    setProfileError(result.ok ? '' : result.error);
+    setSaved(result.ok);
+    if (result.ok) setTimeout(() => setSaved(false), 2500);
   };
 
   const handleAddressSave = (e) => {
@@ -82,9 +84,10 @@ export default function Account() {
               <p className="truncate text-sm font-bold text-primary">{user.name}</p>
               <p className="truncate text-xs text-slate-500">{user.email}</p>
               <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-secondary/10 px-2 py-0.5 text-[10px] font-bold text-secondary">
-                {user.provider === 'google' ? (
+                {(user.providers || [user.provider]).includes('google') ? (
                   <>
-                    <ShieldCheck size={10} /> Google Account
+                    <ShieldCheck size={10} />
+                    {(user.providers || [user.provider]).includes('email') ? 'Google + Email Account' : 'Google Account'}
                   </>
                 ) : (
                   'Email Account'
@@ -128,6 +131,11 @@ export default function Account() {
           {tab === 'profile' && (
             <section className="rounded-xl bg-white p-6 shadow-card">
               <h2 className="text-base font-bold text-primary">Profile Information</h2>
+              {profileError && (
+                <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-600">
+                  {profileError}
+                </p>
+              )}
               <form onSubmit={handleProfileSave} className="mt-5 grid gap-4 sm:grid-cols-2">
                 <div>
                   <label htmlFor="ac-name" className={labelCls}>Full Name</label>

@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { gridCategories } from '../../data/categories';
 import SectionHeader from '../common/SectionHeader';
 import Button from '../common/Button';
+import BrandMarquee from './BrandMarquee';
 
 export default function CategoryGrid() {
   return (
@@ -44,6 +45,7 @@ export default function CategoryGrid() {
           View All Categories
         </Button>
       </div>
+      <BrandMarquee />
     </section>
   );
 }

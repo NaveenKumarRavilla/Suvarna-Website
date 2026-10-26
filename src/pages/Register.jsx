@@ -10,9 +10,10 @@ const inputCls = 'w-full bg-transparent py-2.5 text-sm text-slate-700 outline-no
 
 export default function Register() {
   const navigate = useNavigate();
-  const { register, loginWithGoogle } = useAuth();
+  const { register, loginWithGoogle, googleReady, googleLoadError } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -31,9 +32,13 @@ export default function Register() {
     else setError(res.error);
   };
 
-  const handleGoogle = () => {
-    loginWithGoogle();
-    navigate('/account');
+  const handleGoogle = async () => {
+    setError('');
+    setGoogleLoading(true);
+    const result = await loginWithGoogle();
+    setGoogleLoading(false);
+    if (result.ok) navigate('/account');
+    else setError(result.error);
   };
 
   return (
@@ -87,7 +92,7 @@ export default function Register() {
                 name="phone"
                 type="tel"
                 required
-                pattern="[+0-9\\- ]{10,15}"
+                pattern="[+0-9 -]{10,15}"
                 placeholder="+91 98765 43210"
                 className={inputCls}
               />
@@ -159,10 +164,14 @@ export default function Register() {
           size="lg"
           className="w-full"
           onClick={handleGoogle}
+          disabled={googleLoading || (!googleReady && !googleLoadError)}
         >
           <Chrome size={18} />
-          Sign up with Google
+          {googleLoading ? 'Connecting to Google...' : googleReady ? 'Sign up with Google' : googleLoadError ? 'Google sign-in unavailable' : 'Loading Google sign-in...'}
         </Button>
+        {googleLoadError && (
+          <p role="alert" className="mt-2 text-xs font-medium text-red-600">{googleLoadError}</p>
+        )}
 
         <p className="mt-6 text-center text-sm text-slate-500">
           Already have an account?{' '}

@@ -93,5 +93,11 @@ export const gridCategories = [
   },
 ];
 
+export const normalizeCategoryId = (value = '') =>
+  String(value || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+
 export const categoryLabel = (id) =>
-  navCategories.find((c) => c.id === id)?.label || 'All Products';
+  navCategories.find((c) => c.id === normalizeCategoryId(id))?.label ||
+  (id && id !== 'all'
+    ? String(id).trim().replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+    : 'All Products');

@@ -255,13 +255,26 @@ export default function HeroSlider() {
                   <div className="absolute inset-0 bg-gradient-to-r from-slate-900/30 via-transparent to-slate-900/20" />
                 </div>
               ) : (
-                <img
-                  src={slide.image}
-                  alt={slide.title}
-                  loading={i === 0 ? 'eager' : 'lazy'}
-                  onError={handleImgError}
-                  className={`h-full w-full bg-navy-900/20 ${slide.mediaFit === 'cover' ? 'object-cover' : 'object-contain'} md:max-h-[300px] md:rounded-xl md:shadow-2xl md:ring-1 md:ring-white/20 lg:max-h-[350px]`}
-                />
+                <div className="relative h-full w-full overflow-hidden bg-navy-900/20 md:h-[300px] md:rounded-xl md:shadow-2xl lg:h-[350px]">
+                  {slide.mediaFit !== 'cover' && (
+                    <>
+                      <img
+                        src={slide.image}
+                        alt=""
+                        aria-hidden="true"
+                        className="absolute inset-0 h-full w-full scale-110 object-cover opacity-45 blur-xl"
+                      />
+                      <div className="absolute inset-0 bg-primary/35" aria-hidden="true" />
+                    </>
+                  )}
+                  <img
+                    src={slide.image}
+                    alt={slide.title}
+                    loading={i === 0 ? 'eager' : 'lazy'}
+                    onError={handleImgError}
+                    className={`relative z-10 h-full w-full ${slide.mediaFit === 'cover' ? 'object-cover' : 'object-contain'}`}
+                  />
+                </div>
               )}
             </div>
           </div>

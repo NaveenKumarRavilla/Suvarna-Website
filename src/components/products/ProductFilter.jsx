@@ -1,15 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Minus, Plus, RotateCcw } from 'lucide-react';
-import { navCategories } from '../../data/categories';
 import { MAX_PRICE } from '../../data/products';
 import { formatPrice } from '../../utils/helpers';
 
-const FILTERABLE = navCategories.filter(
-  (c) => !['home', 'contact', 'services', 'offers'].includes(c.id)
-);
-
 export default function ProductFilter({
   filters,
+  categories = [],
   brands = [],
   maxPrice = MAX_PRICE,
   onChange,
@@ -77,7 +73,7 @@ export default function ProductFilter({
               All Products
             </label>
           </li>
-          {FILTERABLE.map((cat) => (
+          {categories.map((cat) => (
             <li key={cat.id}>
               <label className="flex cursor-pointer items-center gap-1.5 text-xs leading-tight text-slate-600">
                 <input
