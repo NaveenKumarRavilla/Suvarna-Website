@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ShoppingCart, User, ShieldCheck, ChevronDown, Package, LogOut, LayoutGrid, Heart } from 'lucide-react';
 import SearchBar from '../common/SearchBar';
+import SiteNotificationBell from '../common/SiteNotificationBell';
 import MobileHeader from './MobileHeader';
 import useCart from '../../hooks/useCart';
 import { useWishlist } from '../../context/WishlistContext';
@@ -210,6 +211,7 @@ export default function Header() {
             <AdminHeaderLink />
             <WishlistLink />
             <CartLink />
+            <SiteNotificationBell />
             <UserMenu />
           </div>
         </div>

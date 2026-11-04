@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { products as seedProducts } from '../data/products';
 import { heroSlides as seedBanners, promoCards as seedPromoCards } from '../data/banners';
 import { defaultPolicies } from '../data/policies';
-import { sendNotification } from '../utils/notifications';
+import { addSiteNotification } from '../utils/siteNotifications';
 
 const AdminContext = createContext(null);
 const STORAGE_KEY = 'suvarna_admin_store';
@@ -227,6 +227,16 @@ export function AdminProvider({ children }) {
     }
   }, [store]);
 
+  useEffect(() => {
+    const syncStore = (event) => {
+      if (event.key !== STORAGE_KEY && event.key !== null) return;
+      setStore(loadStore());
+    };
+
+    window.addEventListener('storage', syncStore);
+    return () => window.removeEventListener('storage', syncStore);
+  }, []);
+
   const value = useMemo(() => {
     const currentAdmin = store.admins.find(
       (admin) => admin.email.toLowerCase() === (currentUser || '').toLowerCase()
@@ -376,14 +386,32 @@ export function AdminProvider({ children }) {
         setStore((s) => ({ ...s, videos: s.videos.filter((v) => v.id !== id) })),
 
       orders: store.orders,
-      addOrder: (order) =>
-        setStore((s) => {
-          const nextOrder = {
-            ...order,
-            id: order.id || `SIE${Date.now().toString().slice(-8)}`,
-            status: 'Pending',
-          };
+      addOrder: (order) => {
+        const nextOrder = {
+          ...order,
+          id: order.id || `SIE${Date.now().toString().slice(-8)}`,
+          status: 'Pending',
+        };
 
+        addSiteNotification({
+          audience: 'admin',
+          type: 'order',
+          title: 'New order received',
+          summary: `${nextOrder.customer || 'A guest'} placed order #${nextOrder.id}.`,
+          href: '/admin/orders',
+        });
+        if (nextOrder.email) {
+          addSiteNotification({
+            audience: 'customer',
+            recipientEmail: normalizeEmail(nextOrder.email),
+            type: 'order',
+            title: 'Order confirmed',
+            summary: `Order #${nextOrder.id} has been received.`,
+            href: '/account?tab=orders',
+          });
+        }
+
+        setStore((s) => {
           const nextOrders = [nextOrder, ...s.orders];
           const nextStore = {
             ...s,
@@ -392,10 +420,22 @@ export function AdminProvider({ children }) {
           };
 
           persistStore(nextStore);
-          sendNotification('order', nextOrder);
           return nextStore;
-        }),
-      updateOrderStatus: (id, status) =>
+        });
+      },
+      updateOrderStatus: (id, status) => {
+        const order = store.orders.find((item) => item.id === id);
+        if (order && order.status !== status && order.email) {
+          addSiteNotification({
+            audience: 'customer',
+            recipientEmail: normalizeEmail(order.email),
+            type: 'order-status',
+            title: `Order ${status.toLowerCase()}`,
+            summary: `Order #${order.id} is now ${status.toLowerCase()}.`,
+            href: '/account?tab=orders',
+          });
+        }
+
         setStore((s) => {
           const nextStore = {
             ...s,
@@ -404,7 +444,8 @@ export function AdminProvider({ children }) {
 
           persistStore(nextStore);
           return nextStore;
-        }),
+        });
+      },
 
       customers: store.customers,
       syncCustomers: (registered) =>
@@ -448,22 +489,29 @@ export function AdminProvider({ children }) {
         setStore((s) => ({ ...s, customers: s.customers.filter((c) => c.id !== id) })),
 
       enquiries: store.enquiries,
-      addEnquiry: (enquiry) =>
+      addEnquiry: (enquiry) => {
+        const nextEnquiry = {
+          ...enquiry,
+          id: nextId(store.enquiries),
+          date: new Date().toISOString().slice(0, 10),
+          status: 'New',
+        };
+
+        addSiteNotification({
+          audience: 'admin',
+          type: 'enquiry',
+          title: 'New enquiry received',
+          summary: `New enquiry from ${nextEnquiry.name || 'a guest'}.`,
+          href: '/admin/enquiries',
+        });
+
         setStore((s) => {
-          const nextEnquiry = {
-            ...enquiry,
-            id: nextId(s.enquiries),
-            date: new Date().toISOString().slice(0, 10),
-            status: 'New',
-          };
-
-          sendNotification('enquiry', nextEnquiry);
-
           return {
             ...s,
             enquiries: [nextEnquiry, ...s.enquiries],
           };
-        }),
+        });
+      },
       updateEnquiryStatus: (id, status) =>
         setStore((s) => ({
           ...s,

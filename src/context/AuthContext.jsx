@@ -121,6 +121,7 @@ export function AuthProvider({ children }) {
           address: '',
           city: '',
           pin: '',
+          addresses: [],
           joined: new Date().toISOString().slice(0, 10),
         };
         users.push(newUser);
@@ -218,6 +219,7 @@ export function AuthProvider({ children }) {
                     address: existing?.address || '',
                     city: existing?.city || '',
                     pin: existing?.pin || '',
+                    addresses: existing?.addresses || [],
                     joined: existing?.joined || new Date().toISOString().slice(0, 10),
                   };
 

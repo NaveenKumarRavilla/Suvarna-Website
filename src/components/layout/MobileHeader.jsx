@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { Menu, User, X, LogOut } from 'lucide-react';
 import SearchBar from '../common/SearchBar';
 import { Logo, CartLink, WishlistLink } from './Header';
+import SiteNotificationBell from '../common/SiteNotificationBell';
 import { navCategories } from '../../data/categories';
 import { useAdmin } from '../../context/AdminContext';
 import { useAuth } from '../../context/AuthContext';
@@ -48,6 +49,7 @@ export default function MobileHeader() {
         <div className="flex items-center">
           <WishlistLink className="px-2" />
           <CartLink className="px-2" />
+          <SiteNotificationBell className="px-1" />
           <Link
             to={isLoggedIn || isAdmin ? (isAdmin ? '/admin' : '/account') : '/login'}
             aria-label={isLoggedIn || isAdmin ? 'My account' : 'Login or Register'}
