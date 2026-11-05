@@ -20,6 +20,8 @@ import ForgotPassword from './pages/ForgotPassword';
 import Register from './pages/Register';
 import Account from './pages/Account';
 import Contact from './pages/Contact';
+import About from './pages/About';
+import Services from './pages/Services';
 import PolicyPage from './pages/PolicyPage';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
@@ -34,6 +36,7 @@ import AdminEnquiries from './pages/admin/AdminEnquiries';
 import AdminOffers from './pages/admin/AdminOffers';
 import AdminSettings from './pages/admin/AdminSettings';
 import AdminPolicies from './pages/admin/AdminPolicies';
+import AdminChangePassword from './pages/admin/AdminChangePassword';
 
 function ScrollToTop() {
   const { pathname, search } = useLocation();
@@ -66,6 +69,8 @@ export default function App() {
                     <Route path="/register" element={<Register />} />
                     <Route path="/account" element={<Account />} />
                     <Route path="/contact" element={<Contact />} />
+                    <Route path="/about" element={<About />} />
+                    <Route path="/services" element={<Services />} />
                     <Route path="/shipping-policy" element={<PolicyPage slug="shipping" />} />
                     <Route path="/return-policy" element={<PolicyPage slug="returns" />} />
                     <Route path="/privacy-policy" element={<PolicyPage slug="privacy" />} />
@@ -86,6 +91,7 @@ export default function App() {
                       <Route path="offers" element={<AdminPermission permission="offers"><AdminOffers /></AdminPermission>} />
                       <Route path="policies" element={<AdminPermission permission="policies"><AdminPolicies /></AdminPermission>} />
                       <Route path="settings" element={<AdminPermission permission="settings"><AdminSettings /></AdminPermission>} />
+                      <Route path="change-password" element={<AdminChangePassword />} />
                     </Route>
                     <Route path="*" element={<Home />} />
                   </Routes>

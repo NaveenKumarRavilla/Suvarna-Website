@@ -13,6 +13,7 @@ import {
   BadgePercent,
   FileText,
   Settings as SettingsIcon,
+  KeyRound,
   LogOut,
   Store,
   Menu,
@@ -34,11 +35,17 @@ const navItems = [
   { to: '/admin/offers', label: 'Manage Offers', icon: BadgePercent },
   { to: '/admin/policies', label: 'Manage Policies', icon: FileText },
   { to: '/admin/settings', label: 'Manage Settings', icon: SettingsIcon },
+  { to: '/admin/change-password', label: 'Change Password', icon: KeyRound },
 ];
 
 function Sidebar({ onNavigate }) {
   const { currentUser, logout, hasPermission, isMaster } = useAdmin();
-  const visibleItems = navItems.filter((item) => item.end || isMaster || hasPermission(item.to.replace('/admin/', '')));
+  const visibleItems = navItems.filter((item) =>
+    item.end ||
+    item.to === '/admin/change-password' ||
+    isMaster ||
+    hasPermission(item.to.replace('/admin/', ''))
+  );
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-center border-b border-slate-100 px-5 py-4">
@@ -95,7 +102,7 @@ function Sidebar({ onNavigate }) {
 }
 
 export default function AdminLayout() {
-  const { isAdmin, currentUser } = useAdmin();
+  const { isAdmin, currentUser, sharedStoreError } = useAdmin();
   const [mobileOpen, setMobileOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -145,6 +152,11 @@ export default function AdminLayout() {
             <Menu size={16} />
             Admin Menu
           </button>
+          {sharedStoreError && (
+            <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+              Shared store sync failed: {sharedStoreError}
+            </p>
+          )}
           <Outlet />
         </div>
       </div>

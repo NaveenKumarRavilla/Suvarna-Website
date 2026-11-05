@@ -5,7 +5,7 @@ import ProductDetails from '../components/products/ProductDetails';
 import Button from '../components/common/Button';
 
 export default function ProductDetailsPage() {
-  const { products } = useAdmin();
+  const { storefrontProducts: products } = useAdmin();
   const { id } = useParams();
   const product = products.find((p) => String(p.id) === id);
 

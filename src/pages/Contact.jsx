@@ -12,6 +12,8 @@ const inputCls =
 
 export default function Contact() {
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
   const { addEnquiry, settings, policies } = useAdmin();
   const policyLinks = [
     ...policyOptions.map(({ id }) => id).filter((id) => policies[id]),
@@ -27,16 +29,23 @@ export default function Contact() {
     { icon: Clock, title: 'Business Hours', lines: [BUSINESS_HOURS, 'Sunday: Closed'] },
   ];
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const form = e.currentTarget;
-    addEnquiry({
+    setSending(true);
+    const result = await addEnquiry({
       name: form.querySelector('#ct-name')?.value || '',
       email: form.querySelector('#ct-email')?.value || '',
       phone: form.querySelector('#ct-phone')?.value || '',
       subject: form.querySelector('#ct-subject')?.value || '',
       message: form.querySelector('#ct-message')?.value || '',
     });
+    setSending(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setError('');
     setSent(true);
   };
 
@@ -141,9 +150,10 @@ export default function Contact() {
                 </label>
                 <textarea id="ct-message" required rows="4" className={inputCls} placeholder="Write your message..." />
               </div>
-              <Button type="submit" variant="primary" size="lg">
+              {error && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-600">{error}</p>}
+              <Button type="submit" variant="primary" size="lg" disabled={sending}>
                 <Send size={16} />
-                Send Message
+                {sending ? 'Sending...' : 'Send Message'}
               </Button>
             </form>
           )}

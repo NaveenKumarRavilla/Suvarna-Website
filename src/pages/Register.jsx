@@ -14,8 +14,9 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const form = e.currentTarget;
     const name = form.name.value;
@@ -27,7 +28,9 @@ export default function Register() {
       setError('Passwords do not match.');
       return;
     }
-    const res = register({ name, email, phone, password });
+    setSubmitting(true);
+    const res = await register({ name, email, phone, password });
+    setSubmitting(false);
     if (res.ok) navigate('/account');
     else setError(res.error);
   };
@@ -147,8 +150,8 @@ export default function Register() {
             </p>
           )}
 
-          <Button type="submit" variant="primary" size="lg" className="w-full">
-            Register
+          <Button type="submit" variant="primary" size="lg" className="w-full" disabled={submitting}>
+            {submitting ? 'Creating Account...' : 'Register'}
           </Button>
         </form>
 
@@ -167,7 +170,7 @@ export default function Register() {
           disabled={googleLoading || (!googleReady && !googleLoadError)}
         >
           <Chrome size={18} />
-          {googleLoading ? 'Connecting to Google...' : googleReady ? 'Sign up with Google' : googleLoadError ? 'Google sign-in unavailable' : 'Loading Google sign-in...'}
+          {googleLoading ? 'Connecting to Google...' : googleReady ? 'Sign up with Google' : googleLoadError ? 'Retry Google sign-in' : 'Loading Google sign-in...'}
         </Button>
         {googleLoadError && (
           <p role="alert" className="mt-2 text-xs font-medium text-red-600">{googleLoadError}</p>

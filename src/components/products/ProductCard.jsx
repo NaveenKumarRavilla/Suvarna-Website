@@ -37,6 +37,11 @@ export default function ProductCard({ product }) {
             className="aspect-[4/3] w-full rounded-xl bg-white object-contain p-3 transition-transform duration-500 group-hover:scale-105"
           />
         </Link>
+        {String(product.images?.[0] || product.image || '').includes('images.unsplash.com') && (
+          <span className="absolute bottom-3 left-3 rounded bg-white/90 px-2 py-1 text-[10px] font-medium text-slate-600 shadow">
+            Illustrative image
+          </span>
+        )}
         {discount > 0 && (
           <span className="absolute left-2 top-2 rounded-md bg-accent px-2 py-1 text-[10px] font-bold text-navy-900 shadow">
             {discount}% OFF

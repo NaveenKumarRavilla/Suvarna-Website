@@ -4,10 +4,6 @@ import {
   Mail,
   MapPin,
   MessageCircle,
-  Instagram,
-  Facebook,
-  Linkedin,
-  Youtube,
 } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 import { getPolicyPath, policyOptions } from '../../data/policies';
@@ -20,7 +16,8 @@ const columns = [
       { label: 'Home', to: '/' },
       { label: 'Products', to: '/products' },
       { label: 'Categories', to: '/products' },
-      { label: 'About Us', to: '/contact' },
+      { label: 'About Us', to: '/about' },
+      { label: 'Services', to: '/services' },
       { label: 'Contact', to: '/contact' },
     ],
   },
@@ -40,13 +37,6 @@ const columns = [
       { label: 'Contact Us', to: '/contact' },
     ],
   },
-];
-
-const socials = [
-  { label: 'Instagram', icon: Instagram, href: 'https://instagram.com' },
-  { label: 'Facebook', icon: Facebook, href: 'https://facebook.com' },
-  { label: 'LinkedIn', icon: Linkedin, href: 'https://linkedin.com' },
-  { label: 'YouTube', icon: Youtube, href: 'https://youtube.com' },
 ];
 
 export default function Footer() {
@@ -72,20 +62,6 @@ export default function Footer() {
             servers, printers, CCTV and complete IT infrastructure solutions.
             Genuine products, expert support and pan-India delivery.
           </p>
-          <div className="mt-5 flex gap-3">
-            {socials.map(({ label, icon: Icon, href }) => (
-              <a
-                key={label}
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={label}
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-accent hover:text-navy-900"
-              >
-                <Icon size={16} />
-              </a>
-            ))}
-          </div>
         </div>
 
         {/* Link columns */}

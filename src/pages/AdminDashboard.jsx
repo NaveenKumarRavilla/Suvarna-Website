@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Package,
@@ -15,9 +16,36 @@ import {
 import { useAdmin } from '../context/AdminContext';
 import { formatPrice } from '../utils/helpers';
 import { StatusBadge } from '../components/admin/AdminForm';
+import { apiRequest } from '../utils/api';
+import { gridCategories } from '../data/categories';
 
 export default function AdminDashboard() {
-  const { products, banners, promoCards, videos, orders, customers, enquiries, offers, policies } = useAdmin();
+  const { products, banners, promoCards, videos, orders, enquiries, offers, policies } = useAdmin();
+  const [customerCount, setCustomerCount] = useState(null);
+  const [customerCountError, setCustomerCountError] = useState('');
+
+  const refreshCustomerCount = useCallback(async () => {
+    try {
+      const result = await apiRequest('customers-count');
+      setCustomerCount(result.count);
+      setCustomerCountError('');
+    } catch (error) {
+      setCustomerCountError(error.message);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshCustomerCount();
+    const intervalId = window.setInterval(refreshCustomerCount, 30_000);
+    const refreshOnFocus = () => {
+      if (document.visibilityState === 'visible') refreshCustomerCount();
+    };
+    document.addEventListener('visibilitychange', refreshOnFocus);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', refreshOnFocus);
+    };
+  }, [refreshCustomerCount]);
 
   const revenue = orders
     .filter((o) => o.status !== 'Cancelled')
@@ -29,18 +57,22 @@ export default function AdminDashboard() {
     { label: 'Promo Cards', value: promoCards.length, icon: Images, to: '/admin/promo-cards', color: 'bg-indigo-100 text-indigo-600' },
     { label: 'Videos', value: videos.length, icon: Youtube, to: '/admin/videos', color: 'bg-rose-100 text-rose-600' },
     { label: 'Orders', value: orders.length, icon: ShoppingBag, to: '/admin/orders', color: 'bg-emerald-100 text-emerald-600' },
-    { label: 'Customers', value: customers.length, icon: Users, to: '/admin/customers', color: 'bg-amber-100 text-amber-600' },
+    { label: 'Customers', value: customerCount ?? '—', icon: Users, to: '/admin/customers', color: 'bg-amber-100 text-amber-600' },
     { label: 'Enquiries', value: enquiries.filter((e) => e.status === 'New').length, icon: MessageSquare, to: '/admin/enquiries', color: 'bg-cyan-100 text-cyan-600' },
     { label: 'Active Offers', value: offers.filter((o) => o.active).length, icon: BadgePercent, to: '/admin/offers', color: 'bg-orange-100 text-orange-600' },
     { label: 'Policies', value: Object.keys(policies).length, icon: FileText, to: '/admin/policies', color: 'bg-fuchsia-100 text-fuchsia-600' },
-    { label: 'Categories', value: 8, icon: FolderTree, to: '/admin/categories', color: 'bg-slate-200 text-slate-600' },
+    { label: 'Categories', value: gridCategories.length, icon: FolderTree, to: '/admin/categories', color: 'bg-slate-200 text-slate-600' },
   ];
 
   return (
     <div>
       <h1 className="text-xl font-extrabold text-primary sm:text-2xl">Dashboard</h1>
       <p className="mt-1 text-sm text-slate-500">Overview of your store at a glance.</p>
-
+      {customerCountError && (
+        <p role="status" className="mt-3 rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          Could not refresh the shared customer count: {customerCountError}
+        </p>
+      )}
       <div className="mt-6 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         {stats.map(({ label, value, icon: Icon, to, color }) => (
           <Link

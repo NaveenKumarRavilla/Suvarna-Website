@@ -14,7 +14,7 @@ const normalizeFilterValue = (value = '') => String(value || '').trim().toLowerC
 const hiddenCategories = ['home', 'contact', 'services', 'offers'];
 
 export default function Products() {
-  const { products } = useAdmin();
+  const { storefrontProducts: products } = useAdmin();
   const [searchParams] = useSearchParams();
   const search = (searchParams.get('search') || '').toLowerCase();
   const urlCategory = searchParams.get('category') || 'all';
@@ -30,6 +30,9 @@ export default function Products() {
     const categories = new Map(
       navCategories
         .filter((category) => !hiddenCategories.includes(category.id))
+        .filter((category) => products.some(
+          (product) => normalizeCategoryId(product.category) === normalizeCategoryId(category.id)
+        ))
         .map((category) => [normalizeCategoryId(category.id), {
           id: normalizeCategoryId(category.id),
           label: category.label,

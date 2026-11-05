@@ -1,16 +1,17 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, Cpu, KeyRound, UserPlus, Trash2, Crown, LayoutDashboard, Store, Mail } from 'lucide-react';
-import { ADMIN_PERMISSIONS, MASTER_ADMIN, MASTER_ADMIN_PASSWORD, useAdmin } from '../context/AdminContext';
+import { ADMIN_PERMISSIONS, MASTER_ADMIN, useAdmin } from '../context/AdminContext';
 import Button from '../components/common/Button';
 import { inputCls, labelCls, StatusBadge } from '../components/admin/AdminForm';
 
 export default function AdminLogin() {
-  const { login, isAdmin, isMaster, currentUser, admins, addAdmin, removeAdmin, updateAdmin, completeInvitation } = useAdmin();
+  const { login, setupMasterAdmin, isAdmin, isMaster, currentUser, admins, addAdmin, removeAdmin, updateAdmin, completeInvitation } = useAdmin();
   const navigate = useNavigate();
   const [mode, setMode] = useState('login');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(MASTER_ADMIN);
   const [password, setPassword] = useState('');
+  const [setupKey, setSetupKey] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
@@ -19,9 +20,16 @@ export default function AdminLogin() {
   const [newPermissions, setNewPermissions] = useState(['products', 'offers']);
   const [inviteNotice, setInviteNotice] = useState('');
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    const result = login(email, password);
+    const result = await login(email, password);
+    if (result.ok) navigate('/admin');
+    else setError(result.error);
+  };
+
+  const handleSetup = async (e) => {
+    e.preventDefault();
+    const result = await setupMasterAdmin(email, password, setupKey);
     if (result.ok) navigate('/admin');
     else setError(result.error);
   };
@@ -64,7 +72,7 @@ export default function AdminLogin() {
         <div className="w-full max-w-5xl rounded-2xl bg-white p-6 shadow-card sm:p-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600"><ShieldCheck size={22} /></span><div><h1 className="text-lg font-extrabold text-primary">Admin Access Granted</h1><p className="text-sm text-slate-500">{currentUser}</p></div></div>
-            <div className="flex gap-2"><Button to="/admin" variant="primary" size="sm"><LayoutDashboard size={15} /> Dashboard</Button><Button to="/" variant="outline" size="sm"><Store size={15} /> Storefront</Button></div>
+            <div className="flex flex-wrap gap-2"><Button to="/admin" variant="primary" size="sm"><LayoutDashboard size={15} /> Dashboard</Button><Button to="/admin/change-password" variant="outline" size="sm"><KeyRound size={15} /> Change Password</Button><Button to="/" variant="outline" size="sm"><Store size={15} /> Storefront</Button></div>
           </div>
 
           {isMaster ? (
@@ -91,19 +99,22 @@ export default function AdminLogin() {
   }
 
   const isInvitation = mode === 'invite';
+  const isSetup = mode === 'setup';
   return (
     <div className="mx-auto flex max-w-8xl items-center justify-center px-4 py-12"><div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-card">
-      <div className="flex flex-col items-center text-center"><span className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-accent"><Cpu size={26} /></span><h1 className="mt-4 text-2xl font-extrabold text-primary">{isInvitation ? 'Accept Admin Invitation' : 'Admin Login'}</h1><p className="mt-1 text-sm text-slate-500">{isInvitation ? 'Create your password to activate access' : 'Authorized admin users only'}</p></div>
-      <form onSubmit={isInvitation ? handleInvitation : handleLogin} className="mt-7 space-y-4">
+      <div className="flex flex-col items-center text-center"><span className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-accent"><Cpu size={26} /></span><h1 className="mt-4 text-2xl font-extrabold text-primary">{isInvitation ? 'Accept Admin Invitation' : isSetup ? 'Set Up Master Admin' : 'Admin Login'}</h1><p className="mt-1 text-sm text-slate-500">{isInvitation ? 'Create your password to activate access' : isSetup ? 'One-time setup for the Hostinger admin database' : 'Authorized admin users only'}</p></div>
+      <form onSubmit={isInvitation ? handleInvitation : isSetup ? handleSetup : handleLogin} className="mt-7 space-y-4">
         {isInvitation && <div><label htmlFor="admin-name" className={labelCls}>Your Name</label><input id="admin-name" value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="Admin name" /></div>}
         <div><label htmlFor="admin-email" className={labelCls}>Admin Email</label><div className="relative"><Mail size={16} className="pointer-events-none absolute left-3 top-3 text-slate-400" /><input id="admin-email" type="email" required value={email} onChange={(e) => { setEmail(e.target.value); setError(''); }} placeholder="admin@example.com" className={`${inputCls} pl-9`} /></div></div>
         {isInvitation && <div><label htmlFor="invite-code" className={labelCls}>Invitation Code</label><input id="invite-code" required value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} placeholder="SIE-ABC123" className={inputCls} /></div>}
-        <div><label htmlFor="admin-password" className={labelCls}>{isInvitation ? 'Create Password' : 'Password'}</label><div className="relative"><KeyRound size={16} className="pointer-events-none absolute left-3 top-3 text-slate-400" /><input id="admin-password" type="password" required minLength={8} value={password} onChange={(e) => { setPassword(e.target.value); setError(''); }} placeholder="Minimum 8 characters" className={`${inputCls} pl-9`} /></div></div>
+        {isSetup && <div><label htmlFor="admin-setup-key" className={labelCls}>One-time Setup Key</label><input id="admin-setup-key" type="password" required value={setupKey} onChange={(e) => { setSetupKey(e.target.value); setError(''); }} className={inputCls} /></div>}
+        <div><label htmlFor="admin-password" className={labelCls}>{isInvitation || isSetup ? 'Create Password' : 'Password'}</label><div className="relative"><KeyRound size={16} className="pointer-events-none absolute left-3 top-3 text-slate-400" /><input id="admin-password" type="password" required minLength={8} value={password} onChange={(e) => { setPassword(e.target.value); setError(''); }} placeholder="Minimum 8 characters" className={`${inputCls} pl-9`} /></div></div>
         {error && <p role="alert" className={`rounded-lg px-3 py-2 text-xs font-medium ${error.includes('accepted') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>{error}</p>}
-        <Button type="submit" variant="primary" size="lg" className="w-full"><ShieldCheck size={16} />{isInvitation ? 'Create Password & Activate' : 'Admin Login'}</Button>
+        <Button type="submit" variant="primary" size="lg" className="w-full"><ShieldCheck size={16} />{isInvitation ? 'Create Password & Activate' : isSetup ? 'Create Master Admin' : 'Admin Login'}</Button>
       </form>
-      <button type="button" onClick={() => { setMode(isInvitation ? 'login' : 'invite'); setError(''); }} className="mt-5 flex w-full items-center justify-center gap-1 text-xs font-semibold text-secondary hover:underline"><UserPlus size={13} />{isInvitation ? 'Back to admin login' : 'Have an invitation? Create password'}</button>
-      {!isInvitation && <p className="mt-5 text-center text-xs text-slate-400">Master admin: <span className="font-semibold text-slate-500">{MASTER_ADMIN}</span><br />Initial demo password: <span className="font-semibold text-slate-500">{MASTER_ADMIN_PASSWORD}</span></p>}
+      <button type="button" onClick={() => { setMode(isInvitation || isSetup ? 'login' : 'invite'); setError(''); }} className="mt-5 flex w-full items-center justify-center gap-1 text-xs font-semibold text-secondary hover:underline"><UserPlus size={13} />{isInvitation || isSetup ? 'Back to admin login' : 'Have an invitation? Create password'}</button>
+      {!isInvitation && !isSetup && <button type="button" onClick={() => { setMode('setup'); setError(''); }} className="mt-3 w-full text-center text-xs font-semibold text-slate-400 hover:text-secondary">First-time Hostinger setup</button>}
+      {!isInvitation && <p className="mt-5 text-center text-xs text-slate-400">Master admin: <span className="font-semibold text-slate-500">{MASTER_ADMIN}</span></p>}
     </div></div>
   );
 }

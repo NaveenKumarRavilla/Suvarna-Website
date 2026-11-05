@@ -43,31 +43,51 @@ export default function Checkout() {
   const [address, setAddress] = useState(() => initialAddresses[0] ? { address: initialAddresses[0].address, city: initialAddresses[0].city, pin: initialAddresses[0].pin } : emptyAddress);
   const [contact, setContact] = useState({ name: user?.name || '', email: user?.email || '', phone: user?.phone || '' });
   const [saveForLater, setSaveForLater] = useState(true);
+  const [customerError, setCustomerError] = useState('');
   const selectedPayment = paymentMethods.find((method) => method.id === payment);
   const PaymentIcon = selectedPayment.icon;
   const activeAddress = addresses.find((item) => item.id === selectedId);
 
   const chooseAddress = (item) => { setSelectedId(item.id); setAddress({ address: item.address || '', city: item.city || '', pin: item.pin || '' }); };
   const addNew = () => { setSelectedId('new'); setAddress(emptyAddress); };
-  const saveAddress = () => {
+  const saveAddress = async () => {
     const invalid = ['delivery-name', 'delivery-phone', 'delivery-address', 'delivery-city', 'delivery-pin'].find((id) => !document.getElementById(id)?.reportValidity());
     if (invalid) return;
     const exists = addresses.find((item) => item.address === address.address && item.city === address.city && item.pin === address.pin);
     const next = exists ? addresses : [...addresses, { id: `address-${Date.now()}`, label: contact.name || `Address ${addresses.length + 1}`, ...address }];
-    if (saveForLater && !exists && isLoggedIn) { setAddresses(next); updateProfile({ address: address.address, city: address.city, pin: address.pin, addresses: next }); setSelectedId(next.at(-1).id); }
+    if (saveForLater && !exists && isLoggedIn) {
+      const result = await updateProfile({ address: address.address, city: address.city, pin: address.pin, addresses: next });
+      if (!result.ok) {
+        setCustomerError(result.error);
+        return;
+      }
+      setAddresses(next);
+      setSelectedId(next.at(-1).id);
+      setCustomerError('');
+    }
     setAddressPanel(false);
   };
-  const placeOrder = () => {
-    const id = `SIE${Date.now().toString().slice(-8)}`;
-    addOrder({ id, customer: contact.name || 'Guest', phone: contact.phone, email: contact.email, items: items.map((item) => ({ id: item.id, name: item.name, qty: item.qty, price: item.price, brand: item.brand, category: item.category, image: item.image, oldPrice: item.oldPrice, stock: item.stock })), total, payment, shippingAddress: address, date: new Date().toISOString().slice(0, 10) });
-    if (isLoggedIn) updateProfile({ address: address.address, city: address.city, pin: address.pin, addresses });
-    setOrderTotal(total); setOrderId(id); clearCart(); window.scrollTo(0, 0);
+  const placeOrder = async () => {
+    if (isLoggedIn && saveForLater) {
+      const result = await updateProfile({ address: address.address, city: address.city, pin: address.pin, addresses });
+      if (!result.ok) {
+        setCustomerError(result.error);
+        return;
+      }
+    }
+    const result = await addOrder({ customer: contact.name || 'Guest', phone: contact.phone, email: contact.email, items: items.map((item) => ({ id: item.id, name: item.name, qty: item.qty, price: item.price, brand: item.brand, category: item.category, image: item.image, oldPrice: item.oldPrice, stock: item.stock })), total, payment, shippingAddress: address, date: new Date().toISOString().slice(0, 10) });
+    if (!result.ok) {
+      setCustomerError(result.error);
+      return;
+    }
+    setOrderTotal(total); setOrderId(result.order.id); clearCart(); window.scrollTo(0, 0);
   };
 
   if (orderId) return <div className="min-h-[70vh] bg-slate-100 px-4 py-10"><div className="mx-auto max-w-xl overflow-hidden rounded-xl bg-white text-center shadow-card"><div className="px-6 py-10"><span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-secondary/10 text-secondary"><CheckCircle2 size={34} /></span><h1 className="mt-4 text-2xl font-extrabold text-primary">Order Successfully Placed!</h1><p className="mt-2 text-sm text-slate-500">Your order number is <b className="text-secondary">#{orderId}</b>.</p></div><div className="divide-y divide-slate-100 border-y text-left text-sm"><p className="flex justify-between px-6 py-4"><span className="text-slate-500">Order Status</span><b className="text-secondary">Awaiting confirmation</b></p><p className="flex justify-between px-6 py-4"><span className="text-slate-500">Order Total</span><b>{formatPrice(orderTotal)}</b></p><p className="flex justify-between px-6 py-4"><span className="text-slate-500">Payment Method</span><b>{selectedPayment.label}</b></p></div><div className="p-5"><Button to="/products" variant="primary">Continue Shopping</Button></div></div></div>;
   if (!items.length) return <div className="mx-auto flex max-w-2xl flex-col items-center gap-4 px-4 py-24 text-center"><PackageCheck size={46} className="text-secondary" /><h1 className="text-2xl font-bold text-primary">Nothing to checkout</h1><p className="text-sm text-slate-500">Add some products to your cart first.</p><Button to="/products" variant="primary">Browse Products</Button></div>;
 
   return <main className="min-h-screen bg-slate-100 pb-8"><div className="mx-auto max-w-7xl px-3 sm:px-5"><div className="flex items-center justify-between border-b border-slate-200 bg-white px-3 sm:px-5"><button type="button" onClick={() => navigate('/cart')} className="flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-secondary"><ArrowLeft size={15} /> Cart</button><Progress page={page} /><span className="hidden items-center gap-1 text-xs font-semibold text-slate-500 sm:flex"><LockKeyhole size={14} /> Secure checkout</span></div>
+    {customerError && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{customerError}</p>}
     {page === 'summary' && <div className="grid gap-4 pt-3 min-[480px]:grid-cols-[minmax(0,1fr)_260px]"><section className="space-y-3"><div className="bg-white px-4 py-4 shadow-sm sm:px-5"><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-bold text-primary">Deliver to:</p><p className="mt-2 text-sm font-semibold text-primary">{contact.name || 'Add your delivery address'}</p><p className="mt-1 max-w-3xl text-sm leading-6 text-slate-700">{address.address ? <>{address.address}, {address.city} {address.pin}</> : 'Select or add an address to continue.'}</p><p className="mt-1 text-sm text-slate-700">{contact.phone}</p></div><button type="button" onClick={() => setAddressPanel(true)} className="shrink-0 rounded border border-slate-200 px-4 py-2 text-xs font-semibold text-secondary hover:border-secondary">{address.address ? 'Change' : 'Add address'}</button></div></div><div className="bg-white shadow-sm"><div className="max-h-[360px] divide-y divide-slate-100 overflow-y-auto">{items.map((item) => <article key={item.id} className="flex gap-4 px-4 py-4 sm:px-5"><img src={item.image} alt="" className="h-20 w-20 shrink-0 object-contain" /><div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold text-primary sm:text-base">{item.name}</h2><p className="mt-1 text-xs text-slate-500">{item.brand} · Qty: {item.qty}</p><p className="mt-3 text-sm font-bold text-primary">{formatPrice(item.price * item.qty)} <span className="ml-1 text-xs font-medium text-slate-400 line-through">{item.oldPrice ? formatPrice(item.oldPrice * item.qty) : ''}</span></p><p className="mt-3 text-xs text-secondary">Delivery will be confirmed after your order.</p></div></article>)}</div></div></section><div className="space-y-3 min-[480px]:sticky min-[480px]:top-3 min-[480px]:h-fit"><PriceDetails subtotal={subtotal} savings={savings} delivery={delivery} total={total} action={<Button type="button" variant="accent" className="w-full justify-center" onClick={() => address.address ? setPage('payment') : setAddressPanel(true)}>Continue</Button>} /><p className="px-2 text-xs leading-relaxed text-slate-500">By continuing, you agree to Suvarna IT Enterprises’ terms and privacy policy.</p></div></div>}
     {page === 'payment' && <div className="checkout-payment-layout grid gap-4 pt-3"><aside className="bg-white p-3 shadow-sm sm:p-4"><h2 className="mb-3 px-1 text-sm font-bold text-primary">Payment method</h2><div className="space-y-2">{paymentMethods.map(({ id, label, note, icon: Icon }) => <button key={id} type="button" disabled={id !== 'cod'} aria-pressed={payment === id} onClick={() => setPayment(id)} className={`flex min-h-[68px] w-full items-center gap-3 rounded-md border p-3 text-left transition ${id === 'cod' ? 'border-secondary bg-secondary/5 ring-1 ring-secondary' : 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-50'}`}><Icon size={20} className="shrink-0 text-primary" /><span className="min-w-0"><b className="block text-sm leading-5 text-primary">{label}</b><small className="mt-0.5 block text-xs leading-4 text-slate-500">{note}</small></span></button>)}</div></aside><section className="min-h-[360px] bg-white p-5 shadow-sm sm:p-6"><div className="mx-auto max-w-lg"><div className="flex h-11 w-11 items-center justify-center rounded-md bg-secondary/10 text-secondary"><PaymentIcon size={22} /></div><h2 className="mt-4 text-lg font-bold text-primary">Cash on Delivery</h2><p className="mt-1 text-sm text-slate-500">Pay at the time of delivery.</p><div className="mt-6 rounded-md border border-slate-200 p-4 text-sm leading-6 text-slate-600"><p className="font-semibold text-primary">Cash payment</p><p className="mt-1">Pay {formatPrice(total)} in cash when your order arrives at the delivery address.</p><p className="mt-2 text-xs text-slate-500">Please keep the amount ready. Delivery fees are included in the total.</p></div></div></section><div className="checkout-payment-price"><PriceDetails subtotal={subtotal} savings={savings} delivery={delivery} total={total} action={<div className="space-y-2"><Button type="button" variant="accent" className="w-full justify-center" onClick={placeOrder}>Place Order</Button><Button type="button" variant="outline" className="w-full justify-center" onClick={() => setPage('summary')}>Order Summary</Button></div>} /></div></div>}
   </div>

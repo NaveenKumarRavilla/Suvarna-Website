@@ -10,6 +10,8 @@ const statuses = ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'];
 export default function AdminOrders() {
   const { orders, updateOrderStatus } = useAdmin();
   const [search, setSearch] = useState('');
+  const [statusError, setStatusError] = useState('');
+  const [updatingOrder, setUpdatingOrder] = useState(null);
 
   const filteredOrders = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -26,9 +28,18 @@ export default function AdminOrders() {
     });
   }, [orders, search]);
 
+  const handleStatusChange = async (id, status) => {
+    setUpdatingOrder(id);
+    setStatusError('');
+    const result = await updateOrderStatus(id, status);
+    setUpdatingOrder(null);
+    if (!result.ok) setStatusError(result.error);
+  };
+
   return (
     <div>
       <PageHeader title="Manage Orders" subtitle={`${orders.length} total orders`} />
+      {statusError && <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{statusError}</p>}
 
       <div className="mb-4 rounded-xl bg-white p-3 shadow-card">
         <div className="relative">
@@ -102,7 +113,8 @@ export default function AdminOrders() {
                   <td className={tdCls}>
                     <select
                       value={o.status || 'Pending'}
-                      onChange={(e) => updateOrderStatus(o.id, e.target.value)}
+                      onChange={(e) => handleStatusChange(o.id, e.target.value)}
+                      disabled={updatingOrder === o.id}
                       aria-label={`Status of order ${o.id}`}
                       className={`${inputCls} !w-auto !py-1.5 text-xs font-semibold`}
                     >

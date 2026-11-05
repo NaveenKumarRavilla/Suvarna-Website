@@ -3,6 +3,7 @@ import { Minus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 import { gridCategories, normalizeCategoryId } from '../../data/categories';
 import { formatPrice } from '../../utils/helpers';
+import { isPublishableProduct } from '../../utils/productQuality';
 import Button from '../../components/common/Button';
 import ImageUpload from '../../components/admin/ImageUpload';
 import { Field, PageHeader, inputCls, tableWrap, tableCls, thCls, tdCls } from '../../components/admin/AdminForm';
@@ -33,6 +34,7 @@ export default function AdminProducts() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
+  const [formError, setFormError] = useState('');
   const [categorySearch, setCategorySearch] = useState('all');
   const [productSearch, setProductSearch] = useState('');
 
@@ -60,12 +62,14 @@ export default function AdminProducts() {
     ].join(' ').toLowerCase();
     return searchableText.includes(searchTerm);
   });
+  const hiddenFromStorefrontCount = products.filter((product) => !isPublishableProduct(product)).length;
 
-  const openAdd = () => { setEditing(null); setForm(emptyForm()); setFormOpen(true); };
+  const openAdd = () => { setEditing(null); setForm(emptyForm()); setFormError(''); setFormOpen(true); };
   const openEdit = (product) => {
     const productImages = Array.isArray(product.images) && product.images.length ? product.images : product.image ? [product.image] : [];
     const configuration = Object.entries(product.specs || {}).map(([key, value]) => ({ key, value: String(value || '') }));
     setEditing(product);
+    setFormError('');
     setForm({
       name: product.name || '', brand: product.brand || '', category: product.category || 'laptops', price: product.price || '', oldPrice: product.oldPrice || '', stock: product.stock || 'In Stock', images: productImages,
       configuration: configuration.length ? configuration : blankConfiguration(), featured: !!product.featured, description: product.description || '', ...warrantyFormValues(product.warranty),
@@ -86,12 +90,22 @@ export default function AdminProducts() {
       if (key && item.value.trim()) result[key] = item.value.trim();
       return result;
     }, {});
+    const completeSpecs = Object.values(specs).filter(
+      (value) => !/^(configuration available|available)$/i.test(value)
+    );
+    if (!form.name.trim() || !form.brand.trim() || form.description.trim().length < 20 ||
+        form.description.trim() === form.name.trim() || completeSpecs.length < 2 ||
+        (form.category === 'laptops' && !/intel|amd|ryzen|core|ultra|apple|snapdragon|xeon|mediatek|mtk/i.test(specs.processor || ''))) {
+      setFormError('Add a clear product name, at least two real specifications, and a useful description before saving. Laptops also need a verified processor specification.');
+      return;
+    }
+    setFormError('');
     const warrantyUnit = Number(form.warrantyDuration) === 1 ? form.warrantyUnit : `${form.warrantyUnit}s`;
     const payload = {
       name: form.name.trim(), brand: form.brand.trim(), category: form.category, price: Number(form.price), oldPrice: form.oldPrice ? Number(form.oldPrice) : Number(form.price), stock: form.stock,
       image: cleanedImages[0] || '', images: cleanedImages, featured: form.featured,
-      specs: { ...specs, processor: specs.processor || Object.values(specs)[0] || 'Configuration available' },
-      description: form.description.trim() || form.name.trim(), warranty: `${form.warrantyDuration} ${warrantyUnit} ${form.warrantyKind}`,
+      specs: { ...specs },
+      description: form.description.trim(), warranty: `${form.warrantyDuration} ${warrantyUnit} ${form.warrantyKind}`,
     };
     if (editing) updateProduct(editing.id, payload); else addProduct({ ...payload, rating: 4.5, reviews: 0 });
     closeForm();
@@ -119,6 +133,12 @@ export default function AdminProducts() {
         }
       />
 
+      {hiddenFromStorefrontCount > 0 && (
+        <p role="status" className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {hiddenFromStorefrontCount} product{hiddenFromStorefrontCount === 1 ? ' is' : 's are'} hidden from customers until complete specifications and a useful description are added. Edit the listed item to publish it.
+        </p>
+      )}
+
       {formOpen && (
         <section className="mb-6 rounded-xl bg-white p-5 shadow-card sm:p-6">
           <div className="mb-5 flex items-center justify-between gap-3">
@@ -127,6 +147,7 @@ export default function AdminProducts() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {formError && <p role="alert" className="rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{formError}</p>}
             <div className="grid gap-4 xl:grid-cols-3">
               <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
                 <h3 className="text-sm font-bold text-primary">Product Details</h3>

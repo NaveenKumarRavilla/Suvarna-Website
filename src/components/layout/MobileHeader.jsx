@@ -4,7 +4,7 @@ import { Menu, User, X, LogOut } from 'lucide-react';
 import SearchBar from '../common/SearchBar';
 import { Logo, CartLink, WishlistLink } from './Header';
 import SiteNotificationBell from '../common/SiteNotificationBell';
-import { navCategories } from '../../data/categories';
+import { navCategories, normalizeCategoryId } from '../../data/categories';
 import { useAdmin } from '../../context/AdminContext';
 import { useAuth } from '../../context/AuthContext';
 
@@ -18,7 +18,13 @@ export default function MobileHeader() {
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const { user, isLoggedIn, logout: logoutAuth } = useAuth();
-  const { isAdmin, currentAdmin, currentUser, logout: logoutAdmin } = useAdmin();
+  const { isAdmin, currentAdmin, currentUser, storefrontProducts: products, logout: logoutAdmin } = useAdmin();
+  const visibleCategories = navCategories.filter((category) =>
+    category.path ||
+    category.special ||
+    ['home', 'contact'].includes(category.id) ||
+    products.some((product) => normalizeCategoryId(product.category) === category.id)
+  );
 
   useEffect(() => {
     setOpen(false);
@@ -90,7 +96,7 @@ export default function MobileHeader() {
               </button>
             </div>
             <nav className="flex-1 py-2" aria-label="Mobile categories">
-              {navCategories.map((cat) => (
+              {visibleCategories.map((cat) => (
                 <Link
                   key={cat.id}
                   to={categoryLink(cat)}

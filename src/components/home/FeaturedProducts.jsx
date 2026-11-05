@@ -3,7 +3,7 @@ import SectionHeader from '../common/SectionHeader';
 import ProductGrid from '../products/ProductGrid';
 
 export default function FeaturedProducts() {
-  const { products } = useAdmin();
+  const { storefrontProducts: products } = useAdmin();
   const featured = products.filter((p) => p.featured).slice(0, 8);
 
   return (

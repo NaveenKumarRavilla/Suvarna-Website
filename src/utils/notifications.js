@@ -1,6 +1,6 @@
 import { COMPANY, WHATSAPP_NUMBER } from './helpers';
 
-export const DEFAULT_NOTIFICATION_EMAIL = 'ravillanaveen1996@gmail.com';
+export const DEFAULT_NOTIFICATION_EMAIL = 'enterprisessuvarnait@gmail.com';
 export const DEFAULT_NOTIFICATION_WHATSAPP = WHATSAPP_NUMBER;
 export const NOTIFICATION_LOG_KEY = 'suvarna_notification_log';
 export const FORMSUBMIT_ENDPOINT = 'https://formsubmit.co/ajax';
@@ -71,8 +71,8 @@ const buildOrderStoreEmailBody = (order) => [
   'Products:',
   renderOrderItems(order.items),
   '',
-  'Receiver Email: ravillanaveen1996@gmail.com',
-  'Receiver WhatsApp: 919182301422',
+  `Receiver Email: ${DEFAULT_NOTIFICATION_EMAIL}`,
+  `Receiver WhatsApp: ${DEFAULT_NOTIFICATION_WHATSAPP}`,
   '',
   'Store: Suvarna IT Enterprises',
 ].join('\n');
@@ -107,7 +107,7 @@ const buildEnquiryStoreEmailBody = (enquiry) => [
   'Enquiry Details:',
   renderEnquiryDetailTable(enquiry),
   '',
-  'Receiver Email: ravillanaveen1996@gmail.com',
+  `Receiver Email: ${DEFAULT_NOTIFICATION_EMAIL}`,
   'Receiver WhatsApp: Email-only route',
   '',
   'Store: Suvarna IT Enterprises',

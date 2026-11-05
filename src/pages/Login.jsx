@@ -17,9 +17,9 @@ export default function Login() {
   const [error, setError] = useState('');
   const [googleLoading, setGoogleLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    const res = login(identifier, password);
+    const res = await login(identifier, password);
     if (res.ok) navigate('/');
     else setError(res.error);
   };
@@ -128,7 +128,7 @@ export default function Login() {
           disabled={googleLoading || (!googleReady && !googleLoadError)}
         >
           <Chrome size={18} />
-          {googleLoading ? 'Connecting to Google...' : googleReady ? 'Continue with Google' : googleLoadError ? 'Google sign-in unavailable' : 'Loading Google sign-in...'}
+          {googleLoading ? 'Connecting to Google...' : googleReady ? 'Continue with Google' : googleLoadError ? 'Retry Google sign-in' : 'Loading Google sign-in...'}
         </Button>
         {googleLoadError && (
           <p role="alert" className="mt-2 text-xs font-medium text-red-600">{googleLoadError}</p>

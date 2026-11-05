@@ -1,15 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { GOOGLE_CLIENT_ID } from '../config/googleAuth';
+import { apiRequest } from '../utils/api';
 
 const AuthContext = createContext(null);
 
-const USERS_KEY = 'suvarna_users';
 const SESSION_KEY = 'suvarna_auth_user';
 let googleIdentityScriptPromise;
 
 const normalizeEmail = (email = '') => String(email || '').trim().toLowerCase();
-const normalizePhone = (phone = '') => String(phone || '').replace(/\D/g, '');
-
 const loadGoogleIdentity = () => {
   if (window.google?.accounts?.oauth2) return Promise.resolve(window.google);
   if (googleIdentityScriptPromise) return googleIdentityScriptPromise;
@@ -19,11 +17,19 @@ const loadGoogleIdentity = () => {
     script.src = 'https://accounts.google.com/gsi/client';
     script.async = true;
     script.defer = true;
+    const timeoutId = window.setTimeout(() => {
+      script.remove();
+      reject(new Error('Google sign-in took too long to load. Check your connection and try again.'));
+    }, 20_000);
     script.onload = () => {
+      window.clearTimeout(timeoutId);
       if (window.google?.accounts?.oauth2) resolve(window.google);
       else reject(new Error('Google sign-in could not be initialized.'));
     };
-    script.onerror = () => reject(new Error('Could not load Google sign-in. Check your internet connection and try again.'));
+    script.onerror = () => {
+      window.clearTimeout(timeoutId);
+      reject(new Error('Could not load Google sign-in. Check your internet connection and try again.'));
+    };
     document.head.appendChild(script);
   }).catch((error) => {
     googleIdentityScriptPromise = null;
@@ -33,19 +39,20 @@ const loadGoogleIdentity = () => {
   return googleIdentityScriptPromise;
 };
 
-const loadUsers = () => {
+const loadSessionUser = () => {
   try {
-    return JSON.parse(localStorage.getItem(USERS_KEY)) || [];
+    return JSON.parse(sessionStorage.getItem(SESSION_KEY)) || null;
   } catch {
-    return [];
+    return null;
   }
 };
 
-const saveUsers = (users) => {
+const saveSessionUser = (user) => {
   try {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
-  } catch {
-    /* storage unavailable */
+    if (user) sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
+    else sessionStorage.removeItem(SESSION_KEY);
+  } catch (error) {
+    console.error('Could not save the customer sign-in session.', error);
   }
 };
 
@@ -53,11 +60,7 @@ export function AuthProvider({ children }) {
   const [googleReady, setGoogleReady] = useState(false);
   const [googleLoadError, setGoogleLoadError] = useState('');
   const [user, setUser] = useState(() => {
-    try {
-      return JSON.parse(sessionStorage.getItem(SESSION_KEY)) || null;
-    } catch {
-      return null;
-    }
+    return loadSessionUser();
   });
 
   useEffect(() => {
@@ -81,13 +84,23 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    try {
-      if (user) sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
-      else sessionStorage.removeItem(SESSION_KEY);
-    } catch {
-      /* storage unavailable */
-    }
+    saveSessionUser(user);
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    apiRequest('customer-session')
+      .then((result) => {
+        if (active) setUser(result.user);
+      })
+      .catch(() => {
+        if (active) setUser(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const value = useMemo(() => {
     const persist = (u) => {
@@ -100,54 +113,31 @@ export function AuthProvider({ children }) {
       googleReady,
       googleLoadError,
 
-      register: ({ name, email, phone, password }) => {
-        const users = loadUsers();
+      register: async ({ name, email, phone, password }) => {
         const cleanEmail = normalizeEmail(email);
-        const cleanPhone = normalizePhone(phone);
-        if (users.some((u) => normalizeEmail(u.email) === cleanEmail)) {
-          return { ok: false, error: 'An account with this email already exists. Please login.' };
+        try {
+          const result = await apiRequest('customer-register', {
+            method: 'POST',
+            body: { name: name.trim(), email: cleanEmail, phone: phone.trim(), password },
+          });
+          persist(result.user);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: error.message };
         }
-        if (cleanPhone && users.some((u) => normalizePhone(u.phone) === cleanPhone)) {
-          return { ok: false, error: 'An account with this mobile number already exists. Please login using that email or mobile number.' };
-        }
-        const newUser = {
-          id: Date.now(),
-          name: name.trim(),
-          email: cleanEmail,
-          phone: phone.trim(),
-          password, // NOTE: demo only — never store plain passwords in production
-          provider: 'email',
-          providers: ['email'],
-          address: '',
-          city: '',
-          pin: '',
-          addresses: [],
-          joined: new Date().toISOString().slice(0, 10),
-        };
-        users.push(newUser);
-        saveUsers(users);
-        const { password: _pw, ...safeUser } = newUser;
-        persist(safeUser);
-        return { ok: true };
       },
 
-      login: (identifier, password) => {
-        const users = loadUsers();
-        const id = normalizeEmail(identifier);
-        const phone = normalizePhone(identifier);
-        const found = users.find(
-          (u) => normalizeEmail(u.email) === id || (!!phone && normalizePhone(u.phone) === phone)
-        );
-        if (!found) return { ok: false, error: 'No account found with this email / mobile.' };
-        if (!found.password) {
-          return { ok: false, error: 'This account uses Google sign-in. Please use Continue with Google.' };
+      login: async (identifier, password) => {
+        try {
+          const result = await apiRequest('customer-login', {
+            method: 'POST',
+            body: { identifier: identifier.trim(), password },
+          });
+          persist(result.user);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: error.message };
         }
-        if (found.password !== password) {
-          return { ok: false, error: 'Incorrect password. Please try again.' };
-        }
-        const { password: _pw, ...safeUser } = found;
-        persist(safeUser);
-        return { ok: true };
       },
 
       setPasswordForCurrentUser: (password) => {
@@ -158,28 +148,29 @@ export function AuthProvider({ children }) {
           return { ok: false, error: 'Password must be at least 8 characters.' };
         }
 
-        const users = loadUsers();
-        const cleanEmail = normalizeEmail(user.email);
-        const index = users.findIndex((item) => normalizeEmail(item.email) === cleanEmail);
-        if (index < 0) {
-          return { ok: false, error: 'We could not find this account. Sign in with Google again and retry.' };
-        }
-
-        const account = users[index];
-        const providers = [...new Set([
-          ...(account.providers || (account.provider ? [account.provider] : [])),
-          'email',
-        ])];
-        const updatedUser = { ...account, password, provider: 'email', providers };
-        users[index] = updatedUser;
-        saveUsers(users);
-
-        const { password: _pw, ...safeUser } = updatedUser;
-        persist(safeUser);
-        return { ok: true };
+        return apiRequest('customer-set-password', { method: 'POST', body: { password } })
+          .then(() => {
+            const providers = [...new Set([...(user.providers || (user.provider ? [user.provider] : [])), 'email'])];
+            persist({ ...user, provider: 'email', providers });
+            return { ok: true };
+          })
+          .catch((error) => ({ ok: false, error: error.message }));
       },
 
       loginWithGoogle: () => new Promise((resolve) => {
+        let settled = false;
+        const finish = (result) => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timeoutId);
+          resolve(result);
+        };
+        const timeoutId = window.setTimeout(() => {
+          finish({
+            ok: false,
+            error: 'Google sign-in timed out. Check pop-up settings and try again.',
+          });
+        }, 60_000);
         loadGoogleIdentity()
           .then((google) => {
             const tokenClient = google.accounts.oauth2.initTokenClient({
@@ -187,61 +178,27 @@ export function AuthProvider({ children }) {
               scope: 'openid email profile',
               callback: async (tokenResponse) => {
                 if (tokenResponse.error || !tokenResponse.access_token) {
-                  resolve({ ok: false, error: 'Google sign-in was not completed. Please try again.' });
+                  finish({ ok: false, error: 'Google sign-in was not completed. Please try again.' });
                   return;
                 }
 
                 try {
-                  const response = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
-                    headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+                  const result = await apiRequest('customer-google', {
+                    method: 'POST',
+                    body: { accessToken: tokenResponse.access_token },
                   });
-                  if (!response.ok) {
-                    throw new Error('Google could not verify this account. Please try again.');
-                  }
-
-                  const profile = await response.json();
-                  if (!profile.sub || !profile.email || !profile.email_verified) {
-                    throw new Error('Google did not return a verified email address for this account.');
-                  }
-
-                  const cleanEmail = normalizeEmail(profile.email);
-                  const users = loadUsers();
-                  const existing = users.find((item) => normalizeEmail(item.email) === cleanEmail);
-                  const providers = [...new Set([...(existing?.providers || (existing?.provider ? [existing.provider] : [])), 'google'])];
-                  const googleUser = {
-                    ...existing,
-                    id: existing?.id || `google-${profile.sub}`,
-                    name: existing?.name || profile.name || cleanEmail.split('@')[0],
-                    email: cleanEmail,
-                    phone: existing?.phone || '',
-                    provider: existing?.password ? 'email' : 'google',
-                    providers,
-                    address: existing?.address || '',
-                    city: existing?.city || '',
-                    pin: existing?.pin || '',
-                    addresses: existing?.addresses || [],
-                    joined: existing?.joined || new Date().toISOString().slice(0, 10),
-                  };
-
-                  if (existing) {
-                    users[users.indexOf(existing)] = googleUser;
-                  } else {
-                    users.push(googleUser);
-                  }
-                  saveUsers(users);
-
-                  const { password: _pw, ...safeUser } = googleUser;
-                  persist(safeUser);
-                  resolve({ ok: true, user: safeUser });
+                  if (settled) return;
+                  persist(result.user);
+                  finish({ ok: true, user: result.user });
                 } catch (error) {
-                  resolve({
+                  finish({
                     ok: false,
                     error: error.message || 'Could not sign in with Google. Please try again.',
                   });
                 }
               },
               error_callback: (error) => {
-                resolve({
+                finish({
                   ok: false,
                   error: error.type === 'popup_closed'
                     ? 'Google sign-in was cancelled.'
@@ -253,31 +210,26 @@ export function AuthProvider({ children }) {
             tokenClient.requestAccessToken({ prompt: 'select_account' });
           })
           .catch((error) => {
-            resolve({ ok: false, error: error.message || 'Could not load Google sign-in.' });
+            finish({ ok: false, error: error.message || 'Could not load Google sign-in.' });
           });
       }),
 
-      logout: () => setUser(null),
+      logout: () => {
+        setUser(null);
+        apiRequest('customer-logout', { method: 'POST' }).catch((error) => {
+          console.error('Could not close the customer server session.', error);
+        });
+      },
 
-      updateProfile: (patch) => {
+      updateProfile: async (patch) => {
         if (!user) return { ok: false, error: 'Log in before updating your profile.' };
-        const users = loadUsers();
-        const idx = users.findIndex((u) => normalizeEmail(u.email) === normalizeEmail(user.email));
-        const cleanPhone = normalizePhone(patch.phone);
-        if (
-          cleanPhone &&
-          cleanPhone !== normalizePhone(user.phone) &&
-          users.some((item, index) => index !== idx && normalizePhone(item.phone) === cleanPhone)
-        ) {
-          return { ok: false, error: 'This mobile number is already linked to another account.' };
+        try {
+          const result = await apiRequest('customer-profile', { method: 'POST', body: patch });
+          persist(result.user);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: error.message };
         }
-        const updatedUser = { ...user, ...patch };
-        if (idx > -1) {
-          users[idx] = { ...users[idx], ...patch };
-          saveUsers(users);
-        }
-        persist(updatedUser);
-        return { ok: true };
       },
     };
   }, [user, googleReady, googleLoadError]);
@@ -289,9 +241,4 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
-}
-
-// Helper for admin panel: read all registered users (without passwords)
-export function getRegisteredCustomers() {
-  return loadUsers().map(({ password: _pw, ...u }) => u);
 }

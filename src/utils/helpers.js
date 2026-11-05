@@ -1,12 +1,12 @@
-export const WHATSAPP_NUMBER = '919182301422';
+export const WHATSAPP_NUMBER = '919966447099';
 
 export const COMPANY = {
   name: 'Suvarna IT Enterprises',
   shortName: 'SUVARNA',
   tagline: 'IT ENTERPRISES',
-  phone: '+91 91823 01422',
+  phone: '+91 99664 47099',
   email: 'sales@suvarnait.com',
-  address: 'Shop No. 12, Ground Floor, Tech Park Plaza, MG Road, Bengaluru, Karnataka 560001',
+  address: 'Shop #179, C Block, 1st Floor, beside Parklane Hotel, upstairs of Golden Dragon Restaurant, Kalasiguda, Secunderabad, Telangana 500003',
   hours: 'Mon - Sat: 10:00 AM - 8:00 PM',
 };
 

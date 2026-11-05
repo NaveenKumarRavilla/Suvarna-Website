@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Heart,
   MessageCircle,
@@ -15,7 +15,9 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import useCart from '../../hooks/useCart';
+import { useAuth } from '../../context/AuthContext';
 import { useWishlist } from '../../context/WishlistContext';
+import { apiRequest } from '../../utils/api';
 import ProductGrid from './ProductGrid';
 import SectionHeader from '../common/SectionHeader';
 import {
@@ -27,27 +29,6 @@ import {
 import { FREE_DELIVERY_THRESHOLD } from '../../hooks/useCart';
 
 const TABS = ['Description', 'Specifications', 'Shipping', 'Warranty', 'Reviews'];
-
-const mockReviews = [
-  {
-    name: 'Rahul M.',
-    rating: 5,
-    date: 'August 2026',
-    comment: 'Excellent product, genuine and delivered quickly. Highly recommended seller.',
-  },
-  {
-    name: 'Priya S.',
-    rating: 4,
-    date: 'July 2026',
-    comment: 'Good value for money. The team helped with setup over WhatsApp.',
-  },
-  {
-    name: 'Anand K.',
-    rating: 5,
-    date: 'June 2026',
-    comment: 'Best price in the market and great after-sales support.',
-  },
-];
 
 function Stars({ value, size = 16 }) {
   return (
@@ -67,12 +48,67 @@ function Stars({ value, size = 16 }) {
 
 export default function ProductDetails({ product, related }) {
   const { addItem } = useCart();
+  const { user } = useAuth();
   const { toggleItem, isWishlisted } = useWishlist();
   const navigate = useNavigate();
   const [activeImage, setActiveImage] = useState(0);
   const [qty, setQty] = useState(1);
   const [tab, setTab] = useState('Description');
+  const [reviews, setReviews] = useState([]);
+  const [canReview, setCanReview] = useState(false);
+  const [yourReview, setYourReview] = useState(null);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState('');
+  const [reviewError, setReviewError] = useState('');
+  const [reviewMessage, setReviewMessage] = useState('');
+  const [reviewLoading, setReviewLoading] = useState(false);
   const wishlisted = isWishlisted(product.id);
+  const reviewAverage = reviews.length
+    ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length
+    : 0;
+
+  useEffect(() => {
+    let active = true;
+    apiRequest('product-reviews', { query: { product_id: product.id } })
+      .then((result) => {
+        if (!active) return;
+        setReviews(result.reviews);
+        setCanReview(result.canReview);
+        setYourReview(result.yourReview);
+        if (result.yourReview) {
+          setReviewRating(result.yourReview.rating);
+          setReviewComment(result.yourReview.comment);
+        }
+      })
+      .catch((error) => {
+        if (active) setReviewError(error.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, [product.id, user?.email]);
+
+  const submitReview = async (event) => {
+    event.preventDefault();
+    setReviewLoading(true);
+    setReviewError('');
+    setReviewMessage('');
+    try {
+      await apiRequest('product-review', {
+        method: 'POST',
+        body: { productId: product.id, rating: reviewRating, comment: reviewComment },
+      });
+      const result = await apiRequest('product-reviews', { query: { product_id: product.id } });
+      setReviews(result.reviews);
+      setCanReview(result.canReview);
+      setYourReview(result.yourReview);
+      setReviewMessage('Your verified purchase review has been published.');
+    } catch (error) {
+      setReviewError(error.message);
+    } finally {
+      setReviewLoading(false);
+    }
+  };
 
   const galleryImages = Array.isArray(product.images) && product.images.length
     ? product.images
@@ -115,6 +151,11 @@ export default function ProductDetails({ product, related }) {
                 onError={handleImgError}
                 className="aspect-[4/3] w-full rounded-xl bg-white object-contain p-3 transition-transform duration-500 group-hover:scale-[1.02]"
               />
+              {String(galleryImages[activeImage] || product.image || '').includes('images.unsplash.com') && (
+                <span className="absolute bottom-3 left-3 rounded bg-white/90 px-2 py-1 text-[11px] font-medium text-slate-600 shadow">
+                  Illustrative image
+                </span>
+              )}
             </div>
 
             {galleryImages.length > 1 && (
@@ -190,9 +231,13 @@ export default function ProductDetails({ product, related }) {
           </h1>
 
           <div className="mt-2 flex items-center gap-2 text-sm text-slate-500">
-            <Stars value={product.rating} />
-            <span className="font-semibold text-primary">{product.rating}</span>
-            <span>({product.reviews} reviews)</span>
+            {reviews.length > 0 ? (
+              <>
+                <Stars value={reviewAverage} />
+                <span className="font-semibold text-primary">{reviewAverage.toFixed(1)}</span>
+                <span>({reviews.length} verified {reviews.length === 1 ? 'review' : 'reviews'})</span>
+              </>
+            ) : <span>No verified reviews yet</span>}
           </div>
 
           <div className="mt-4 rounded-xl bg-white p-5 shadow-card">
@@ -371,20 +416,67 @@ export default function ProductDetails({ product, related }) {
             </p>
           )}
           {tab === 'Reviews' && (
-            <ul className="max-w-3xl space-y-5">
-              {mockReviews.map((r) => (
-                <li key={r.name} className="rounded-lg border border-slate-100 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-sm font-bold text-primary">{r.name}</span>
-                    <span className="text-xs text-slate-400">{r.date}</span>
-                  </div>
-                  <div className="mt-1">
-                    <Stars value={r.rating} size={14} />
-                  </div>
-                  <p className="mt-2 text-sm text-slate-600">{r.comment}</p>
-                </li>
-              ))}
-            </ul>
+            <div className="max-w-3xl space-y-6">
+              {user ? canReview ? (
+                <form onSubmit={submitReview} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <h2 className="text-sm font-bold text-primary">{yourReview ? 'Update your review' : 'Review this product'}</h2>
+                  <p className="mt-1 text-xs text-slate-500">Reviews are available to signed-in customers with a delivered order for this product.</p>
+                  <label className="mt-4 block text-xs font-semibold text-slate-600" htmlFor="product-review-rating">Rating</label>
+                  <select
+                    id="product-review-rating"
+                    value={reviewRating}
+                    onChange={(event) => setReviewRating(Number(event.target.value))}
+                    className="mt-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                  >
+                    {[5, 4, 3, 2, 1].map((rating) => <option key={rating} value={rating}>{rating} out of 5</option>)}
+                  </select>
+                  <label className="mt-3 block text-xs font-semibold text-slate-600" htmlFor="product-review-comment">Your experience</label>
+                  <textarea
+                    id="product-review-comment"
+                    required
+                    maxLength={1000}
+                    rows={4}
+                    value={reviewComment}
+                    onChange={(event) => setReviewComment(event.target.value)}
+                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                  />
+                  {reviewError && <p role="alert" className="mt-2 text-sm font-medium text-red-600">{reviewError}</p>}
+                  {reviewMessage && <p role="status" className="mt-2 text-sm font-medium text-emerald-700">{reviewMessage}</p>}
+                  <button type="submit" disabled={reviewLoading} className="mt-3 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                    {reviewLoading ? 'Publishing...' : yourReview ? 'Update review' : 'Publish review'}
+                  </button>
+                </form>
+              ) : (
+                <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600">
+                  {reviewError || (user
+                    ? 'A review can be submitted after your order for this product is marked delivered.'
+                    : <> <Link to="/login" className="font-semibold text-secondary hover:underline">Sign in</Link> to leave a review after purchasing and receiving this product.</>)}
+                </p>
+              ) : (
+                <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600">
+                  <Link to="/login" className="font-semibold text-secondary hover:underline">Sign in</Link> to leave a review after purchasing and receiving this product.
+                </p>
+              )}
+              {reviews.length ? (
+                <ul className="space-y-4">
+                  {reviews.map((review) => (
+                    <li key={`${review.name}-${review.date}`} className="rounded-lg border border-slate-100 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-sm font-bold text-primary">{review.name}</span>
+                        <span className="text-xs text-slate-400">{review.date}</span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-2">
+                        <Stars value={review.rating} size={14} />
+                        <span className="text-[11px] font-semibold text-emerald-700">Verified purchase</span>
+                      </div>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-600">{review.comment}</p>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-slate-500">No verified purchase reviews yet.</p>
+              )}
+            </div>
           )}
         </div>
       </div>

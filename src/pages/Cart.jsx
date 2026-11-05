@@ -118,14 +118,18 @@ export default function Cart() {
           </h2>
           <dl className="mt-4 space-y-3 text-sm">
             <div className="flex justify-between">
-              <dt className="text-slate-500">Subtotal</dt>
-              <dd className="font-semibold text-primary">{formatPrice(subtotal)}</dd>
+              <dt className="text-slate-500">Subtotal (before discount)</dt>
+              <dd className="font-semibold text-primary">{formatPrice(subtotal + savings)}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate-500">Discount</dt>
               <dd className="font-semibold text-emerald-600">
                 - {formatPrice(savings)}
               </dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-slate-500">Items total (after discount)</dt>
+              <dd className="font-semibold text-primary">{formatPrice(subtotal)}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate-500">Delivery</dt>
@@ -138,7 +142,7 @@ export default function Cart() {
               </dd>
             </div>
             <div className="flex justify-between border-t border-slate-100 pt-3 text-base">
-              <dt className="font-bold text-primary">Total</dt>
+              <dt className="font-bold text-primary">Payable total</dt>
               <dd className="font-extrabold text-primary">{formatPrice(total)}</dd>
             </div>
           </dl>

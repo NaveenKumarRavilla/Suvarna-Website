@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import {
   User,
@@ -25,6 +25,7 @@ import useCart from '../hooks/useCart';
 import { formatPrice, handleImgError } from '../utils/helpers';
 import Button from '../components/common/Button';
 import { StatusBadge, inputCls, labelCls } from '../components/admin/AdminForm';
+import { apiRequest } from '../utils/api';
 
 const TABS = [
   { id: 'profile', label: 'Profile', icon: User },
@@ -155,7 +156,7 @@ function downloadInvoice(order, settings) {
 
 export default function Account() {
   const { user, isLoggedIn, logout, updateProfile } = useAuth();
-  const { orders, settings } = useAdmin();
+  const { settings } = useAdmin();
   const { items: wishlistItems, removeItem, clearWishlist } = useWishlist();
   const { addItem } = useCart();
   const [searchParams] = useSearchParams();
@@ -165,31 +166,53 @@ export default function Account() {
   const [addressEditor, setAddressEditor] = useState(null);
   const [addressDraft, setAddressDraft] = useState({ label: '', address: '', city: '', pin: '' });
   const [expandedOrder, setExpandedOrder] = useState(null);
+  const [myOrders, setMyOrders] = useState([]);
+  const [ordersError, setOrdersError] = useState('');
 
   const savedAddresses = getSavedAddresses(user);
 
-  const myOrders = useMemo(() => {
-    if (!user?.email) return [];
-
-    const currentEmail = user.email.trim().toLowerCase();
-    return orders.filter((o) => {
-      const orderEmail = (o.email || '').trim().toLowerCase();
-      return orderEmail === currentEmail;
-    });
-  }, [orders, user]);
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setMyOrders([]);
+      return undefined;
+    }
+    let active = true;
+    const refreshOrders = async () => {
+      try {
+        const result = await apiRequest('customer-orders');
+        if (active) {
+          setMyOrders(result.orders);
+          setOrdersError('');
+        }
+      } catch (error) {
+        if (active) setOrdersError(error.message);
+      }
+    };
+    refreshOrders();
+    const intervalId = window.setInterval(refreshOrders, 15_000);
+    const refreshOnFocus = () => {
+      if (document.visibilityState === 'visible') refreshOrders();
+    };
+    document.addEventListener('visibilitychange', refreshOnFocus);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', refreshOnFocus);
+    };
+  }, [isLoggedIn, user?.email]);
 
   if (!isLoggedIn) return <Navigate to="/login" replace />;
 
-  const handleProfileSave = (e) => {
+  const handleProfileSave = async (e) => {
     e.preventDefault();
     const form = e.currentTarget;
-    const result = updateProfile({ name: form.name.value, phone: form.phone.value });
+    const result = await updateProfile({ name: form.name.value, phone: form.phone.value });
     setProfileError(result.ok ? '' : result.error);
     setSaved(result.ok);
     if (result.ok) setTimeout(() => setSaved(false), 2500);
   };
 
-  const handleAddressSave = (e) => {
+  const handleAddressSave = async (e) => {
     e.preventDefault();
     const cleanAddress = {
       id: addressEditor === 'new' ? `address-${Date.now()}` : addressEditor,
@@ -201,13 +224,18 @@ export default function Account() {
     const nextAddresses = addressEditor === 'new'
       ? [...savedAddresses, cleanAddress]
       : savedAddresses.map((item) => item.id === addressEditor ? cleanAddress : item);
-    updateProfile({
+    const result = await updateProfile({
       addresses: nextAddresses,
       address: nextAddresses[0]?.address || '',
       city: nextAddresses[0]?.city || '',
       pin: nextAddresses[0]?.pin || '',
     });
+    if (!result.ok) {
+      setProfileError(result.error);
+      return;
+    }
     setAddressEditor(null);
+    setProfileError('');
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
@@ -222,14 +250,19 @@ export default function Account() {
     setAddressEditor(address.id);
   };
 
-  const removeAddress = (id) => {
+  const removeAddress = async (id) => {
     const nextAddresses = savedAddresses.filter((address) => address.id !== id);
-    updateProfile({
+    const result = await updateProfile({
       addresses: nextAddresses,
       address: nextAddresses[0]?.address || '',
       city: nextAddresses[0]?.city || '',
       pin: nextAddresses[0]?.pin || '',
     });
+    if (!result.ok) {
+      setProfileError(result.error);
+      return;
+    }
+    setProfileError('');
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
@@ -285,6 +318,11 @@ export default function Account() {
 
         {/* Content */}
         <div className="min-w-0">
+          {profileError && tab !== 'profile' && (
+            <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-2.5 text-sm font-medium text-red-600">
+              {profileError}
+            </p>
+          )}
           {saved && (
             <p role="status" className="mb-4 flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700">
               <CheckCircle2 size={16} /> Saved successfully!
@@ -327,6 +365,11 @@ export default function Account() {
 
           {tab === 'orders' && (
             <section className="rounded-xl bg-white p-6 shadow-card">
+              {ordersError && (
+                <p role="alert" className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-600">
+                  Could not refresh your order status: {ordersError}
+                </p>
+              )}
               <div className="flex flex-wrap items-end justify-between gap-2 border-b border-slate-100 pb-4">
                 <div>
                   <h2 className="text-base font-bold text-primary">My Orders ({myOrders.length})</h2>

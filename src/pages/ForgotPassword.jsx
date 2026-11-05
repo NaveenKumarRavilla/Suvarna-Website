@@ -55,7 +55,7 @@ export default function ForgotPassword() {
     }
 
     setSaving(true);
-    const result = setPasswordForCurrentUser(password);
+    const result = await setPasswordForCurrentUser(password);
     setSaving(false);
     if (!result.ok) {
       setError(result.error);

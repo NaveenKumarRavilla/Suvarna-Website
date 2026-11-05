@@ -28,7 +28,7 @@ export const navCategories = [
   { id: 'storage', label: 'Storage', icon: HardDrive },
   { id: 'gaming', label: 'Gaming', icon: Gamepad2 },
   { id: 'accessories', label: 'Accessories', icon: Headphones },
-  { id: 'services', label: 'Services', icon: Wrench, path: '/contact' },
+  { id: 'services', label: 'Services', icon: Wrench, path: '/services' },
   { id: 'refurbished', label: 'Refurbished', icon: RefreshCcw },
   { id: 'offers', label: 'Offers', icon: BadgePercent, special: true },
   { id: 'contact', label: 'Contact', icon: Phone, path: '/contact' },

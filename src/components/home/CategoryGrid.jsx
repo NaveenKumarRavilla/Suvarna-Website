@@ -1,10 +1,16 @@
 import { Link } from 'react-router-dom';
-import { gridCategories } from '../../data/categories';
+import { gridCategories, normalizeCategoryId } from '../../data/categories';
+import { useAdmin } from '../../context/AdminContext';
 import SectionHeader from '../common/SectionHeader';
 import Button from '../common/Button';
 import BrandMarquee from './BrandMarquee';
 
 export default function CategoryGrid() {
+  const { storefrontProducts: products } = useAdmin();
+  const availableCategories = gridCategories.filter((category) =>
+    products.some((product) => normalizeCategoryId(product.category) === category.id)
+  );
+
   return (
     <section aria-labelledby="top-categories" className="mx-auto max-w-8xl px-4 py-10">
       <SectionHeader
@@ -15,7 +21,7 @@ export default function CategoryGrid() {
         id="top-categories"
         className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-5 md:grid-cols-4 xl:grid-cols-8"
       >
-        {gridCategories.map((cat) => {
+        {availableCategories.map((cat) => {
           const Icon = cat.icon;
           return (
             <Link

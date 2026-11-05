@@ -1,23 +1,62 @@
-import { useEffect } from 'react';
-import { Trash2, Mail, Phone, ShieldCheck } from 'lucide-react';
-import { useAdmin } from '../../context/AdminContext';
-import { getRegisteredCustomers } from '../../context/AuthContext';
+import { useEffect, useState } from 'react';
+import { Trash2, Mail, Phone, ShieldCheck, RefreshCw } from 'lucide-react';
+import Button from '../../components/common/Button';
 import { PageHeader, tableWrap, tableCls, thCls, tdCls } from '../../components/admin/AdminForm';
+import { apiRequest } from '../../utils/api';
 
 export default function AdminCustomers() {
-  const { customers, deleteCustomer, syncCustomers } = useAdmin();
+  const [customers, setCustomers] = useState([]);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  // Pull live registered users (auth store) into the admin customer list
+  const loadCustomers = async () => {
+    setLoading(true);
+    try {
+      const result = await apiRequest('customers-list');
+      setCustomers(result.customers);
+      setError('');
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    syncCustomers(getRegisteredCustomers());
-  }, [syncCustomers]);
+    loadCustomers();
+    const intervalId = window.setInterval(loadCustomers, 15_000);
+    const refreshOnFocus = () => {
+      if (document.visibilityState === 'visible') loadCustomers();
+    };
+    document.addEventListener('visibilitychange', refreshOnFocus);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', refreshOnFocus);
+    };
+  }, []);
+
+  const handleDelete = async (id) => {
+    try {
+      await apiRequest('customers-delete', { method: 'POST', body: { id } });
+      setCustomers((current) => current.filter((customer) => customer.id !== id));
+      setError('');
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
 
   return (
     <div>
-      <PageHeader title="Manage Customers" subtitle={`${customers.length} registered customers`} />
+      <PageHeader
+        title="Manage Customers"
+        subtitle={`${customers.length} registered customers`}
+        action={<Button type="button" variant="secondary" size="sm" onClick={loadCustomers} disabled={loading}><RefreshCw size={14} />{loading ? 'Refreshing...' : 'Refresh'}</Button>}
+      />
+      <p className="mb-4 text-xs text-slate-500">Customer accounts and matching order counts are shared through the Hostinger database.</p>
+      {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{error}</p>}
       {customers.length === 0 ? (
         <div className="rounded-xl bg-white p-10 text-center shadow-card">
-          <p className="text-sm text-slate-500">No customers yet. Users who register or sign in with Google will appear here.</p>
+          <p className="text-sm text-slate-500">{error ? 'Customer data could not be loaded.' : 'No customers yet. Users who register or sign in with Google will appear here.'}</p>
         </div>
       ) : (
         <div className={tableWrap}>
@@ -63,14 +102,14 @@ export default function AdminCustomers() {
                   </td>
                   <td className={tdCls}>
                     <span className="rounded-full bg-secondary/10 px-2.5 py-1 text-xs font-bold text-secondary">
-                      {c.orders}
+                      {c.orders ?? 0}
                     </span>
                   </td>
                   <td className={tdCls}>{c.joined}</td>
                   <td className={tdCls}>
                     <button
                       type="button"
-                      onClick={() => deleteCustomer(c.id)}
+                      onClick={() => handleDelete(c.id)}
                       aria-label={`Remove customer ${c.name}`}
                       className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
                     >
