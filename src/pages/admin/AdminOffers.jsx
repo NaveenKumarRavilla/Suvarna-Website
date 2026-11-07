@@ -16,12 +16,18 @@ export default function AdminOffers() {
   const { offers, categories, addOffer, updateOffer, deleteOffer } = useAdmin();
   const [form, setForm] = useState(emptyForm);
   const [modalOpen, setModalOpen] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    addOffer({ ...form, active: true });
+    setSaving(true);
+    const saved = await addOffer({ ...form, active: true });
+    setSaving(false);
+    if (!saved) { setSaveError('Offer was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'); return; }
+    setSaveError('');
     setForm(emptyForm);
     setModalOpen(false);
   };
@@ -86,6 +92,7 @@ export default function AdminOffers() {
       {modalOpen && (
         <Modal title="Add Offer" onClose={() => setModalOpen(false)}>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {saveError && <p role="alert" className="text-sm text-red-600">{saveError}</p>}
             <Field label="Offer Title *">
               <input required value={form.title} onChange={set('title')} className={inputCls} placeholder="Festive Laptop Sale" />
             </Field>
@@ -106,8 +113,8 @@ export default function AdminOffers() {
               </Field>
             </div>
             <div className="flex gap-3 pt-1">
-              <Button type="submit" variant="primary" className="flex-1">
-                Add Offer
+              <Button type="submit" variant="primary" className="flex-1" disabled={saving}>
+                {saving ? 'Saving…' : 'Add Offer'}
               </Button>
               <Button type="button" variant="ghost" onClick={() => setModalOpen(false)}>
                 Cancel

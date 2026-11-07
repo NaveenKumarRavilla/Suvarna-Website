@@ -14,6 +14,7 @@ const SETTINGS_FORM_DRAFT_KEY = 'suvarna_admin_settings_form_draft';
 export default function AdminSettings() {
   const { settings, updateSettings, admins, addAdmin, removeAdmin, isMaster, setAdminFormDirty } = useAdmin();
   const [form, setForm] = useState(settings);
+  const [editBase, setEditBase] = useState(settings);
   const [saved, setSaved] = useState(false);
   const [newAdmin, setNewAdmin] = useState('');
   const [notice, setNotice] = useState('');
@@ -29,8 +30,10 @@ export default function AdminSettings() {
     try {
       const draft = JSON.parse(localStorage.getItem(SETTINGS_FORM_DRAFT_KEY) || 'null');
       if (!draft || typeof draft !== 'object') return;
-      const recovered = { ...settings, ...draft };
+      const { baseSettings, ...draftValues } = draft;
+      const recovered = { ...settings, ...draftValues };
       setForm(recovered);
+      setEditBase(baseSettings || settings);
       setAdminFormDirty(JSON.stringify(recovered) !== JSON.stringify(settings));
       setNotice('Recovered unsaved store settings from this browser.');
     } catch (error) {
@@ -48,11 +51,11 @@ export default function AdminSettings() {
       return;
     }
     try {
-      localStorage.setItem(SETTINGS_FORM_DRAFT_KEY, JSON.stringify(form));
+      localStorage.setItem(SETTINGS_FORM_DRAFT_KEY, JSON.stringify({ ...form, baseSettings: editBase }));
     } catch (error) {
       console.error('Could not preserve the settings form draft.', error);
     }
-  }, [form, settings]);
+  }, [editBase, form, settings]);
 
   const set = (key) => (e) => {
     const value = e.target.value;
@@ -63,6 +66,13 @@ export default function AdminSettings() {
 
   const handleSave = async (e) => {
     e.preventDefault();
+    const changedFields = Object.keys(form).filter((key) => JSON.stringify(form[key]) !== JSON.stringify(editBase[key]));
+    const conflicts = changedFields.filter((key) => JSON.stringify(settings[key]) !== JSON.stringify(editBase[key]));
+    if (conflicts.length) {
+      setSaved(false);
+      setNotice(`These settings changed in another admin session: ${conflicts.join(', ')}. Your draft is preserved; reload and reapply your changes.`);
+      return;
+    }
     setSavingSettings(true);
     const result = await updateSettings(form);
     setSavingSettings(false);
@@ -72,6 +82,7 @@ export default function AdminSettings() {
       return;
     }
     setAdminFormDirty(false);
+    setEditBase(form);
     try {
       localStorage.removeItem(SETTINGS_FORM_DRAFT_KEY);
     } catch (error) {

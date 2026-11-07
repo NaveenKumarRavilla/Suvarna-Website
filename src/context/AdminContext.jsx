@@ -652,6 +652,11 @@ export function AdminProvider({ children }) {
         }
         if (!sharedStoreConflictRef.current) setSharedStoreError('');
         setSharedStoreReady(true);
+        // The authenticated snapshot is the same authoritative catalogue used by
+        // the storefront. Mark it ready so restored sessions do not spin forever.
+        setStorefrontReady(true);
+        setStorefrontDataAvailable(Boolean(data));
+        setStorefrontError(data ? '' : 'Storefront data is not initialized yet. Please try again later.');
       } catch (error) {
         if (!active) return;
         if (error.status === 401 && active) {
@@ -939,43 +944,25 @@ export function AdminProvider({ children }) {
 
       promoCards: store.promoCards,
       addPromoCard: (item) =>
-        setStore((s) => ({
-          ...s,
-          promoCards: [...s.promoCards, { ...item, id: nextId(s.promoCards), active: true }],
-        })),
+        commitSharedMutation((s) => ({ ...s, promoCards: [...s.promoCards, { ...item, id: nextId(s.promoCards), active: true }] })),
       updatePromoCard: (id, patch) =>
-        setStore((s) => ({
-          ...s,
-          promoCards: s.promoCards.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-        })),
+        commitSharedMutation((s) => ({ ...s, promoCards: s.promoCards.map((item) => (item.id === id ? { ...item, ...patch } : item)) })),
       deletePromoCard: (id) =>
         setStore((s) => ({ ...s, promoCards: s.promoCards.filter((item) => item.id !== id) })),
 
       offers: store.offers,
       addOffer: (item) =>
-        setStore((s) => ({
-          ...s,
-          offers: [...s.offers, { ...item, id: nextId(s.offers) }],
-        })),
+        commitSharedMutation((s) => ({ ...s, offers: [...s.offers, { ...item, id: nextId(s.offers) }] })),
       updateOffer: (id, patch) =>
-        setStore((s) => ({
-          ...s,
-          offers: s.offers.map((o) => (o.id === id ? { ...o, ...patch } : o)),
-        })),
+        commitSharedMutation((s) => ({ ...s, offers: s.offers.map((o) => (o.id === id ? { ...o, ...patch } : o)) })),
       deleteOffer: (id) =>
         setStore((s) => ({ ...s, offers: s.offers.filter((o) => o.id !== id) })),
 
       videos: store.videos,
       addVideo: (item) =>
-        setStore((s) => ({
-          ...s,
-          videos: [...s.videos, { ...item, id: nextId(s.videos) }],
-        })),
+        commitSharedMutation((s) => ({ ...s, videos: [...s.videos, { ...item, id: nextId(s.videos) }] })),
       updateVideo: (id, patch) =>
-        setStore((s) => ({
-          ...s,
-          videos: s.videos.map((v) => (v.id === id ? { ...v, ...patch } : v)),
-        })),
+        commitSharedMutation((s) => ({ ...s, videos: s.videos.map((v) => (v.id === id ? { ...v, ...patch } : v)) })),
       deleteVideo: (id) =>
         setStore((s) => ({ ...s, videos: s.videos.filter((v) => v.id !== id) })),
 
@@ -1164,17 +1151,9 @@ export function AdminProvider({ children }) {
 
       policies: store.policies,
       addPolicy: (id, policy) =>
-        setStore((s) => ({
-          ...s,
-          policies: s.policies[id]
-            ? s.policies
-            : { ...s.policies, [id]: policy },
-        })),
+        commitSharedMutation((s) => ({ ...s, policies: s.policies[id] ? s.policies : { ...s.policies, [id]: policy } })),
       updatePolicy: (id, patch) =>
-        setStore((s) => ({
-          ...s,
-          policies: { ...s.policies, [id]: { ...s.policies[id], ...patch } },
-        })),
+        commitSharedMutation((s) => ({ ...s, policies: { ...s.policies, [id]: { ...s.policies[id], ...patch } } })),
       deletePolicy: (id) =>
         setStore((s) => {
           const policies = { ...s.policies };

@@ -84,6 +84,7 @@ const parseBannerCsv = (text) => {
 export default function AdminBanners() {
   const { banners, saveBannerBatch, updateBanner, deleteBanner, setAdminFormDirty } = useAdmin();
   const [editing, setEditing] = useState(null);
+  const [editBase, setEditBase] = useState(null);
   const [isCloning, setIsCloning] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [modalOpen, setModalOpen] = useState(false);
@@ -106,6 +107,7 @@ export default function AdminBanners() {
       if (!draft?.form || typeof draft.form !== 'object') return;
       const existing = banners.find((banner) => String(banner.id) === String(draft.editingId));
       setEditing(draft.mode === 'edit' ? existing || null : null);
+      setEditBase(draft.mode === 'edit' && existing ? (draft.baseRecord || JSON.stringify(existing)) : null);
       setIsCloning(draft.mode === 'clone');
       setForm({ ...emptyForm, ...draft.form });
       setModalOpen(true);
@@ -123,14 +125,16 @@ export default function AdminBanners() {
         form,
         editingId: editing?.id ?? null,
         mode: editing ? 'edit' : isCloning ? 'clone' : 'add',
+        baseRecord: editBase,
       }));
     } catch (error) {
       console.error('Could not preserve the banner form draft.', error);
     }
-  }, [editing, form, isCloning, modalOpen]);
+  }, [editBase, editing, form, isCloning, modalOpen]);
 
   const openAdd = () => {
     setEditing(null);
+    setEditBase(null);
     setIsCloning(false);
     setForm(emptyForm);
     setVideoError('');
@@ -139,6 +143,7 @@ export default function AdminBanners() {
   };
   const openEdit = (b) => {
     setEditing(b);
+    setEditBase(JSON.stringify(b));
     setIsCloning(false);
     setForm({
       badge: b.badge,
@@ -157,6 +162,7 @@ export default function AdminBanners() {
   };
   const openClone = (banner) => {
     setEditing(null);
+    setEditBase(null);
     setIsCloning(true);
     setForm({
       badge: banner.badge || '',
@@ -205,6 +211,13 @@ export default function AdminBanners() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (editing) {
+      const current = banners.find((banner) => String(banner.id) === String(editing.id));
+      if (!current || JSON.stringify(current) !== editBase) {
+        setImportError('This banner changed in another admin session after you opened it. Your draft is preserved; reload the latest record and reapply your changes.');
+        return;
+      }
+    }
     const payload = {
       ...form,
       mediaType: form.mediaType || 'image',

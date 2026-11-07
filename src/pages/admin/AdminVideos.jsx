@@ -16,6 +16,8 @@ export default function AdminVideos() {
   const { videos, addVideo, updateVideo, deleteVideo } = useAdmin();
   const [form, setForm] = useState(emptyForm);
   const [modalOpen, setModalOpen] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -24,9 +26,13 @@ export default function AdminVideos() {
     return match ? match[1] : value.trim();
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    addVideo({ ...form, youtubeId: extractId(form.youtubeId), active: true });
+    setSaving(true);
+    const saved = await addVideo({ ...form, youtubeId: extractId(form.youtubeId), active: true });
+    setSaving(false);
+    if (!saved) { setSaveError('Video was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'); return; }
+    setSaveError('');
     setForm(emptyForm);
     setModalOpen(false);
   };
@@ -96,6 +102,7 @@ export default function AdminVideos() {
       {modalOpen && (
         <Modal title="Add Video" onClose={() => setModalOpen(false)}>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {saveError && <p role="alert" className="text-sm text-red-600">{saveError}</p>}
             <Field label="Video Title *">
               <input required value={form.title} onChange={set('title')} className={inputCls} placeholder="Dell Latitude 5440 Review" />
             </Field>
@@ -106,8 +113,8 @@ export default function AdminVideos() {
               <input value={form.category} onChange={set('category')} className={inputCls} placeholder="laptops" />
             </Field>
             <div className="flex gap-3 pt-1">
-              <Button type="submit" variant="primary" className="flex-1">
-                Add Video
+              <Button type="submit" variant="primary" className="flex-1" disabled={saving}>
+                {saving ? 'Saving…' : 'Add Video'}
               </Button>
               <Button type="button" variant="ghost" onClick={() => setModalOpen(false)}>
                 Cancel

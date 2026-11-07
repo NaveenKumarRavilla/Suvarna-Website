@@ -144,6 +144,7 @@ export default function AdminProducts() {
   const location = useLocation();
   const navigate = useNavigate();
   const [editing, setEditing] = useState(null);
+  const [editBase, setEditBase] = useState(null);
   const [formMode, setFormMode] = useState('add');
   const [form, setForm] = useState(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
@@ -182,11 +183,12 @@ export default function AdminProducts() {
   });
   const hiddenFromStorefrontCount = products.filter((product) => !isPublishableProduct(product)).length;
 
-  const openAdd = () => { setEditing(null); setFormMode('add'); setForm(emptyForm()); setFormError(''); setAdminFormDirty(true); setFormOpen(true); };
+  const openAdd = () => { setEditing(null); setEditBase(null); setFormMode('add'); setForm(emptyForm()); setFormError(''); setAdminFormDirty(true); setFormOpen(true); };
   const openEdit = (product, clone = false) => {
     const productImages = Array.isArray(product.images) && product.images.length ? product.images : product.image ? [product.image] : [];
     const configuration = Object.entries(product.specs || {}).map(([key, value]) => ({ key, value: String(value || '') }));
     setEditing(clone ? null : product);
+    setEditBase(clone ? null : JSON.stringify(product));
     setFormMode(clone ? 'clone' : 'edit');
     setFormError('');
     setAdminFormDirty(true);
@@ -218,6 +220,7 @@ export default function AdminProducts() {
       const existing = products.find((product) => String(product.id) === String(draft.editingId));
       const isEditing = draft.mode === 'edit' && !!existing;
       setEditing(isEditing ? existing : null);
+      setEditBase(isEditing ? (draft.baseRecord || JSON.stringify(existing)) : null);
       setFormMode(isEditing ? 'edit' : draft.mode === 'clone' ? 'clone' : 'add');
       setForm({ ...emptyForm(), ...draft.form });
       setFormError('Recovered an unsaved product form from this browser.');
@@ -235,17 +238,19 @@ export default function AdminProducts() {
         form,
         editingId: editing?.id ?? null,
         mode: formMode,
+        baseRecord: editBase,
       }));
     } catch (error) {
       console.error('Could not preserve the product form draft.', error);
     }
-  }, [editing, form, formMode, formOpen]);
+  }, [editBase, editing, form, formMode, formOpen]);
 
   useEffect(() => () => setAdminFormDirty(false), [setAdminFormDirty]);
 
   const closeForm = (saved = false) => {
     if (!saved && !window.confirm('Discard this product form?')) return;
     setEditing(null);
+    setEditBase(null);
     setFormMode('add');
     setFormOpen(false);
     setAdminFormDirty(false);
@@ -261,6 +266,13 @@ export default function AdminProducts() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (editing) {
+      const current = products.find((product) => String(product.id) === String(editing.id));
+      if (!current || JSON.stringify(current) !== editBase) {
+        setFormError('This product changed in another admin session after you opened it. Your draft is preserved; reload the latest record and reapply your changes.');
+        return;
+      }
+    }
     const cleanedImages = (form.images || []).filter(Boolean);
     const specs = form.configuration.reduce((result, item) => {
       const key = toSpecKey(item.key || '');
@@ -413,7 +425,7 @@ export default function AdminProducts() {
         <section className="mb-6 rounded-xl bg-white p-5 shadow-card sm:p-6">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div><h2 className="text-lg font-extrabold text-primary">{editing ? 'Edit Product' : formMode === 'clone' ? 'Clone Product' : 'Add Product Details'}</h2><p className="mt-1 text-xs text-slate-500">Changes are saved only when you click {editing ? 'Save Changes' : 'Add Product'}.</p></div>
-            <button type="button" onClick={closeForm} aria-label="Close product form" className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-primary"><X size={18} /></button>
+            <button type="button" onClick={() => closeForm()} aria-label="Close product form" className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-primary"><X size={18} /></button>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -474,7 +486,7 @@ export default function AdminProducts() {
               <section className="rounded-xl border border-slate-200 p-3"><Field label="Description"><textarea value={form.description} onChange={set('description')} rows="3" className={inputCls} placeholder="Describe the product, its use cases, and key benefits." /></Field></section>
               <section className="rounded-xl border border-slate-200 p-3"><h3 className="mb-2 text-sm font-bold text-primary">Product Images</h3><ImageUpload label="Add Image" value={form.images} multiple compact recommendedWidth={1200} recommendedHeight={1200} minimumWidth={600} minimumHeight={600} maximumWidth={2000} maximumHeight={2000} onChange={(value) => setForm((current) => ({ ...current, images: value }))} /></section>
             </div>
-            <div className="flex flex-wrap gap-3 border-t border-slate-100 pt-5"><Button type="submit" variant="primary" disabled={savingProduct}>{savingProduct ? 'Saving…' : editing ? 'Save Changes' : 'Add Product'}</Button><Button type="button" variant="ghost" onClick={closeForm} disabled={savingProduct}>Cancel</Button></div>
+            <div className="flex flex-wrap gap-3 border-t border-slate-100 pt-5"><Button type="submit" variant="primary" disabled={savingProduct}>{savingProduct ? 'Saving…' : editing ? 'Save Changes' : 'Add Product'}</Button><Button type="button" variant="ghost" onClick={() => closeForm()} disabled={savingProduct}>Cancel</Button></div>
           </form>
         </section>
       )}
