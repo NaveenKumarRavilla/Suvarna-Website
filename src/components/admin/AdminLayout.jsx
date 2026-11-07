@@ -102,9 +102,21 @@ function Sidebar({ onNavigate }) {
 }
 
 export default function AdminLayout() {
-  const { isAdmin, currentUser, sharedStoreReady, sharedStoreSaving, sharedStoreError, sharedStoreConflict } = useAdmin();
+  const { isAdmin, currentUser, sharedStoreReady, sharedStoreSaving, sharedStoreDirty, sharedStoreError, sharedStoreConflict } = useAdmin();
   const [mobileOpen, setMobileOpen] = useState(false);
   const navigate = useNavigate();
+
+  const confirmUnsavedNavigation = (event) => {
+    if (!sharedStoreDirty) return;
+    const link = event.target.closest('a[href]');
+    if (!link || link.target === '_blank') return;
+    const destination = new URL(link.href, window.location.origin);
+    if (destination.origin === window.location.origin && destination.pathname === window.location.pathname) return;
+    if (!window.confirm('There are unsaved admin changes. Your draft is being retained locally. Leave this page?')) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
 
   useEffect(() => {
     if (!isAdmin) {
@@ -115,7 +127,7 @@ export default function AdminLayout() {
   if (!isAdmin) return <Navigate to="/admin/login" replace />;
 
   return (
-    <div className="mx-auto max-w-8xl px-4 py-6">
+    <div className="mx-auto max-w-8xl px-4 py-6" onClickCapture={confirmUnsavedNavigation}>
       <div className="flex gap-6">
         {/* Desktop sidebar */}
         <aside className="sticky top-28 hidden h-[calc(100vh-140px)] w-64 shrink-0 overflow-hidden rounded-xl bg-white shadow-card lg:block">

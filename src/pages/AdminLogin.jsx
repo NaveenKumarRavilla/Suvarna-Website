@@ -34,9 +34,9 @@ export default function AdminLogin() {
     else setError(result.error);
   };
 
-  const handleInvitation = (e) => {
+  const handleInvitation = async (e) => {
     e.preventDefault();
-    const result = completeInvitation({ email, inviteCode, password, name });
+    const result = await completeInvitation({ email, inviteCode, password, name });
     if (result.ok) {
       setMode('login');
       setPassword('');
@@ -50,7 +50,7 @@ export default function AdminLogin() {
       : [...current, permission]);
   };
 
-  const handleAddAdmin = (e) => {
+  const handleAddAdmin = async (e) => {
     e.preventDefault();
     const clean = newAdmin.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) {
@@ -61,9 +61,13 @@ export default function AdminLogin() {
       setInviteNotice('This email already has admin access.');
       return;
     }
-    const code = addAdmin({ email: clean, role: newRole, permissions: newPermissions });
+    const result = await addAdmin({ email: clean, role: newRole, permissions: newPermissions });
+    if (!result.ok) {
+      setInviteNotice(result.error);
+      return;
+    }
     setNewAdmin('');
-    setInviteNotice(`Invitation created for ${clean}. Share invite code: ${code}`);
+    setInviteNotice(`Invitation created for ${clean}. Share invite code: ${result.inviteCode}`);
   };
 
   if (isAdmin) {

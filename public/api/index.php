@@ -4,6 +4,10 @@ declare(strict_types=1);
 ob_start();
 
 const MAX_SHARED_STORE_BYTES = 8_000_000;
+const ADMIN_PERMISSION_IDS = [
+    'categories', 'products', 'banners', 'promo-cards', 'videos', 'orders',
+    'customers', 'enquiries', 'offers', 'settings', 'policies',
+];
 
 final class ApiException extends RuntimeException
 {
@@ -85,9 +89,11 @@ try {
             }
             $statement = $pdo->prepare('INSERT INTO admin_accounts (email, password_hash) VALUES (?, ?)');
             $statement->execute([$email, password_hash($password, PASSWORD_DEFAULT)]);
+            $profile = $pdo->prepare('INSERT INTO admin_profiles (email, name, role, permissions, status) VALUES (?, ?, ?, ?, ?)');
+            $profile->execute([$email, 'Master Admin', 'Master Admin', json_encode(ADMIN_PERMISSION_IDS), 'Active']);
             session_regenerate_id(true);
             $_SESSION['admin_email'] = $email;
-            respond(200, ['email' => $email]);
+            respond(200, ['email' => $email, 'admin' => getAdminProfile($pdo, $email)]);
 
         case 'admin-login':
             requireMethod('POST');
@@ -101,12 +107,12 @@ try {
             }
             session_regenerate_id(true);
             $_SESSION['admin_email'] = $admin['email'];
-            respond(200, ['email' => $admin['email']]);
+            respond(200, ['email' => $admin['email'], 'admin' => getAdminProfile($pdo, $admin['email'])]);
 
         case 'admin-session':
             requireMethod('GET');
             requireAdmin();
-            respond(200, ['email' => $_SESSION['admin_email']]);
+            respond(200, ['email' => $_SESSION['admin_email'], 'admin' => getAdminProfile($pdo, $_SESSION['admin_email'])]);
 
         case 'admin-logout':
             requireMethod('POST');
@@ -133,6 +139,161 @@ try {
             $statement = $pdo->prepare('UPDATE admin_accounts SET password_hash = ? WHERE email = ?');
             $statement->execute([password_hash($input['newPassword'], PASSWORD_DEFAULT), $_SESSION['admin_email']]);
             respond(200, ['ok' => true]);
+
+        case 'admin-invites':
+            requireMethod('GET');
+            requireMasterAdmin();
+            $statement = $pdo->query(
+                'SELECT email, name, role, permissions, status, DATE_FORMAT(created_at, \'%Y-%m-%d\') AS addedAt
+                 FROM admin_profiles ORDER BY created_at ASC'
+            );
+            $admins = array_map('normalizeAdminProfile', $statement->fetchAll());
+            respond(200, ['admins' => $admins]);
+
+        case 'admin-invite':
+            requireMethod('POST');
+            requireMasterAdmin();
+            $input = readJson();
+            $email = normalizeEmail($input['email'] ?? '');
+            $name = cleanText($input['name'] ?? '', 160) ?: (explode('@', $email)[0] ?? '');
+            $role = cleanText($input['role'] ?? 'Editor', 40);
+            $permissions = normalizeAdminPermissions($input['permissions'] ?? ['products', 'offers']);
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL) || !in_array($role, ['Editor', 'Manager', 'Support'], true)) {
+                respond(422, ['error' => 'Enter a valid admin email and role.']);
+            }
+            $exists = $pdo->prepare('SELECT 1 FROM admin_profiles WHERE email = ?');
+            $exists->execute([$email]);
+            if ($exists->fetchColumn()) respond(409, ['error' => 'This email already has admin access.']);
+            $inviteCode = 'SIE-' . strtoupper(bin2hex(random_bytes(4)));
+            $statement = $pdo->prepare(
+                'INSERT INTO admin_profiles (email, name, role, permissions, invite_hash, status)
+                 VALUES (?, ?, ?, ?, ?, ?)'
+            );
+            $statement->execute([$email, $name, $role, json_encode($permissions), hash('sha256', $inviteCode), 'Invited']);
+            respond(201, ['admin' => getAdminProfile($pdo, $email), 'inviteCode' => $inviteCode]);
+
+        case 'admin-invitation-complete':
+            requireMethod('POST');
+            $input = readJson();
+            $email = normalizeEmail($input['email'] ?? '');
+            $inviteCode = strtoupper(cleanText($input['inviteCode'] ?? '', 80));
+            $password = $input['password'] ?? null;
+            $name = cleanText($input['name'] ?? '', 160);
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL) || !validPassword($password)) {
+                respond(422, ['error' => 'Enter a valid email address and a password of at least 8 characters.']);
+            }
+            $statement = $pdo->prepare('SELECT invite_hash, status FROM admin_profiles WHERE email = ?');
+            $statement->execute([$email]);
+            $invitation = $statement->fetch();
+            if (
+                !$invitation ||
+                $invitation['status'] !== 'Invited' ||
+                !hash_equals((string) $invitation['invite_hash'], hash('sha256', $inviteCode))
+            ) {
+                respond(422, ['error' => 'Invalid invitation email or code.']);
+            }
+            $pdo->beginTransaction();
+            try {
+                $account = $pdo->prepare('INSERT INTO admin_accounts (email, password_hash) VALUES (?, ?)');
+                $account->execute([$email, password_hash($password, PASSWORD_DEFAULT)]);
+                $profile = $pdo->prepare(
+                    'UPDATE admin_profiles SET name = ?, invite_hash = NULL, status = ? WHERE email = ? AND status = ?'
+                );
+                $profile->execute([$name ?: explode('@', $email)[0], 'Active', $email, 'Invited']);
+                $pdo->commit();
+            } catch (Throwable $error) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $error;
+            }
+            respond(200, ['ok' => true]);
+
+        case 'admin-update':
+            requireMethod('POST');
+            requireMasterAdmin();
+            $input = readJson();
+            $email = normalizeEmail($input['email'] ?? '');
+            if ($email === normalizeEmail($config['master_admin_email'] ?? '')) {
+                respond(422, ['error' => 'The master admin profile cannot be changed here.']);
+            }
+            $role = cleanText($input['role'] ?? '', 40);
+            if (!in_array($role, ['Editor', 'Manager', 'Support'], true)) {
+                respond(422, ['error' => 'The admin role is invalid.']);
+            }
+            $permissions = normalizeAdminPermissions($input['permissions'] ?? []);
+            $statement = $pdo->prepare('UPDATE admin_profiles SET role = ?, permissions = ? WHERE email = ?');
+            $statement->execute([$role, json_encode($permissions), $email]);
+            if ($statement->rowCount() === 0) {
+                $exists = $pdo->prepare('SELECT 1 FROM admin_profiles WHERE email = ?');
+                $exists->execute([$email]);
+                if (!$exists->fetchColumn()) respond(404, ['error' => 'Admin profile was not found.']);
+            }
+            respond(200, ['admin' => getAdminProfile($pdo, $email)]);
+
+        case 'admin-remove':
+            requireMethod('POST');
+            requireMasterAdmin();
+            $input = readJson();
+            $email = normalizeEmail($input['email'] ?? '');
+            if ($email === normalizeEmail($config['master_admin_email'] ?? '')) {
+                respond(422, ['error' => 'The master admin cannot be removed.']);
+            }
+            $pdo->beginTransaction();
+            try {
+                $pdo->prepare('DELETE FROM admin_accounts WHERE email = ?')->execute([$email]);
+                $pdo->prepare('DELETE FROM admin_profiles WHERE email = ?')->execute([$email]);
+                $pdo->commit();
+            } catch (Throwable $error) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $error;
+            }
+            respond(200, ['ok' => true]);
+
+        case 'media-upload':
+            requireMethod('POST');
+            requireAdminAny(['products', 'banners', 'promo-cards', 'videos', 'offers']);
+            $upload = $_FILES['media'] ?? null;
+            if (!is_array($upload) || ($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                respond(422, ['error' => 'Select a valid image or video file and try again.']);
+            }
+            if (($upload['size'] ?? 0) < 1 || $upload['size'] > 4 * 1024 * 1024) {
+                respond(413, ['error' => 'Media files must be no larger than 4 MB.']);
+            }
+            $mime = (new finfo(FILEINFO_MIME_TYPE))->file($upload['tmp_name']);
+            $url = storeMediaFile($mime, file_get_contents($upload['tmp_name']));
+            respond(201, ['url' => $url, 'mimeType' => $mime]);
+
+        case 'admin-media-migrate':
+            requireMethod('POST');
+            requireAdminAny(['products', 'banners', 'promo-cards', 'videos', 'offers']);
+            $pdo->beginTransaction();
+            try {
+                $statement = $pdo->prepare('SELECT store_data, revision FROM shared_store WHERE store_key = ? FOR UPDATE');
+                $statement->execute(['main']);
+                $shared = $statement->fetch();
+                if (!$shared) {
+                    $pdo->commit();
+                    respond(200, ['migrated' => 0, 'revision' => 0]);
+                }
+                $data = json_decode($shared['store_data'], true);
+                if (!is_array($data)) throw new RuntimeException('Shared store data is not valid JSON.');
+                $migrated = externalizeEmbeddedMedia($data);
+                if ($migrated > 0) {
+                    $serialized = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    if ($serialized === false || strlen($serialized) > MAX_SHARED_STORE_BYTES) {
+                        throw new RuntimeException('Migrated shared store data exceeds the configured size limit.');
+                    }
+                    $update = $pdo->prepare('UPDATE shared_store SET store_data = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE store_key = ?');
+                    $update->execute([$serialized, 'main']);
+                }
+                $pdo->commit();
+                respond(200, [
+                    'migrated' => $migrated,
+                    'revision' => (int) $shared['revision'] + ($migrated > 0 ? 1 : 0),
+                ]);
+            } catch (Throwable $error) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $error;
+            }
 
         case 'customer-register':
             requireMethod('POST');
@@ -285,6 +446,21 @@ try {
                 'canReview' => $canReview,
             ]);
 
+        case 'product-reviews-export':
+            requireMethod('GET');
+            requireAdmin('products');
+            $statement = $pdo->query(
+                'SELECT product_id AS productId, customer_name AS name, rating, comment,
+                        DATE_FORMAT(created_at, \'%Y-%m-%d\') AS date
+                 FROM product_reviews ORDER BY product_id ASC, created_at DESC, id DESC'
+            );
+            $reviews = array_map(static function (array $review): array {
+                $review['rating'] = (int) $review['rating'];
+                $review['verifiedPurchase'] = true;
+                return $review;
+            }, $statement->fetchAll());
+            respond(200, ['reviews' => $reviews]);
+
         case 'product-review':
             requireMethod('POST');
             requireCustomer();
@@ -355,7 +531,7 @@ try {
 
         case 'customers-list':
             requireMethod('GET');
-            requireAdmin();
+            requireAdmin('customers');
             $customers = $pdo->query(
                 'SELECT id, name, email, phone, phone_digits, provider, providers, address, city, pin, joined_at
                  FROM customers ORDER BY joined_at DESC, id DESC'
@@ -376,7 +552,7 @@ try {
 
         case 'customers-update-phone':
             requireMethod('POST');
-            requireAdmin();
+            requireAdmin('customers');
             $input = readJson();
             $customerId = filter_var($input['id'] ?? null, FILTER_VALIDATE_INT);
             if (!$customerId || $customerId < 1) respond(422, ['error' => 'A valid customer ID is required.']);
@@ -401,7 +577,7 @@ try {
 
         case 'customers-import':
             requireMethod('POST');
-            requireAdmin();
+            requireAdmin('customers');
             $input = readJson();
             $records = $input['customers'] ?? null;
             if (!is_array($records) || count($records) < 1 || count($records) > 500) {
@@ -528,7 +704,7 @@ try {
 
         case 'customers-count':
             requireMethod('GET');
-            requireAdmin();
+            requireAdmin('customers');
             $count = (int) $pdo->query('SELECT COUNT(*) FROM customers')->fetchColumn();
             respond(200, ['count' => $count]);
 
@@ -544,8 +720,14 @@ try {
             requireAdmin();
             if ($method === 'GET') {
                 $shared = getSharedStore($pdo);
+                $data = $shared ? $shared['data'] : null;
+                $profile = currentAdminProfile();
+                if (is_array($data) && !$profile['master']) {
+                    if (!in_array('orders', $profile['permissions'], true)) $data['orders'] = [];
+                    if (!in_array('enquiries', $profile['permissions'], true)) $data['enquiries'] = [];
+                }
                 respond(200, [
-                    'data' => $shared ? $shared['data'] : null,
+                    'data' => $data,
                     'revision' => $shared ? (int) $shared['revision'] : 0,
                 ]);
             }
@@ -583,7 +765,14 @@ try {
                     if (!is_array($currentData)) {
                         throw new RuntimeException('Shared store data is not valid JSON.');
                     }
-                    foreach (['orders', 'enquiries'] as $collection) {
+                    $profile = currentAdminProfile();
+                    foreach (['orders' => 'orders', 'enquiries' => 'enquiries'] as $collection => $permission) {
+                        if (!$profile['master'] && !in_array($permission, $profile['permissions'], true)) {
+                            $data[$collection] = $currentData[$collection] ?? [];
+                        }
+                    }
+                    requireSharedStoreWritePermissions($currentData, $data);
+                    foreach (['orders'] as $collection) {
                         if (is_array($currentData[$collection] ?? null)) {
                             $data[$collection] = array_values($currentData[$collection]);
                         }
@@ -600,6 +789,7 @@ try {
                     $statement->execute([$serialized, 'main']);
                     $revision = $currentRevision + 1;
                 } else {
+                    requireMasterAdmin();
                     if ($expectedRevision !== 0) {
                         $pdo->rollBack();
                         respond(409, [
@@ -633,7 +823,7 @@ try {
 
         case 'admin-order-status':
             requireMethod('POST');
-            requireAdmin();
+            requireAdmin('orders');
             $input = readJson();
             $orderId = cleanText($input['id'] ?? '', 80);
             $status = cleanText($input['status'] ?? '', 20);
@@ -671,7 +861,7 @@ try {
 
         case 'customers-delete':
             requireMethod('POST');
-            requireAdmin();
+            requireAdmin('customers');
             $input = readJson();
             $statement = $pdo->prepare('DELETE FROM customers WHERE id = ?');
             $statement->execute([(int) ($input['id'] ?? 0)]);
@@ -706,6 +896,31 @@ function ensureSchema(PDO $pdo): void
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS admin_profiles (
+            email VARCHAR(254) NOT NULL PRIMARY KEY,
+            name VARCHAR(160) NOT NULL,
+            role VARCHAR(40) NOT NULL,
+            permissions JSON NOT NULL,
+            invite_hash CHAR(64) NULL,
+            status VARCHAR(20) NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+    $pdo->exec(
+        "INSERT IGNORE INTO admin_profiles (email, name, role, permissions, status)
+         SELECT email, SUBSTRING_INDEX(email, '@', 1), 'Editor', JSON_ARRAY('products', 'offers'), 'Active'
+         FROM admin_accounts"
+    );
+    global $config;
+    $masterEmail = normalizeEmail($config['master_admin_email'] ?? '');
+    if ($masterEmail !== '') {
+        $masterProfile = $pdo->prepare(
+            "UPDATE admin_profiles SET name = 'Master Admin', role = 'Master Admin',
+             permissions = ?, status = 'Active', invite_hash = NULL WHERE email = ?"
+        );
+        $masterProfile->execute([json_encode(ADMIN_PERMISSION_IDS), $masterEmail]);
+    }
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS customers (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -763,9 +978,97 @@ function readJson(): array
     return $decoded;
 }
 
-function requireAdmin(): void
+function currentAdminProfile(): array
 {
+    global $pdo;
     if (empty($_SESSION['admin_email'])) respond(401, ['error' => 'Admin login is required.']);
+    $profile = getAdminProfile($pdo, (string) $_SESSION['admin_email']);
+    if (!$profile || $profile['status'] !== 'Active') {
+        unset($_SESSION['admin_email']);
+        respond(401, ['error' => 'This admin account is inactive or no longer exists.']);
+    }
+    return $profile;
+}
+
+function requireAdmin(?string $permission = null): void
+{
+    $profile = currentAdminProfile();
+    if ($permission !== null && !$profile['master'] && !in_array($permission, $profile['permissions'], true)) {
+        respond(403, ['error' => 'Your admin account does not have permission to perform this action.']);
+    }
+}
+
+function requireAdminAny(array $permissions): void
+{
+    $profile = currentAdminProfile();
+    if ($profile['master']) return;
+    foreach ($permissions as $permission) {
+        if (in_array($permission, $profile['permissions'], true)) return;
+    }
+    respond(403, ['error' => 'Your admin account does not have permission to perform this action.']);
+}
+
+function requireSharedStoreWritePermissions(array $currentData, array $newData): void
+{
+    $permissionsByKey = [
+        'categories' => 'categories',
+        'products' => 'products',
+        'banners' => 'banners',
+        'promoCards' => 'promo-cards',
+        'videos' => 'videos',
+        'offers' => 'offers',
+        'enquiries' => 'enquiries',
+        'settings' => 'settings',
+        'policies' => 'policies',
+    ];
+    foreach ($permissionsByKey as $key => $permission) {
+        if (($currentData[$key] ?? null) !== ($newData[$key] ?? null)) {
+            requireAdmin($permission);
+        }
+    }
+}
+
+function requireMasterAdmin(): void
+{
+    global $config;
+    requireAdmin();
+    if (normalizeEmail($_SESSION['admin_email']) !== normalizeEmail($config['master_admin_email'] ?? '')) {
+        respond(403, ['error' => 'Only the master admin can manage admin accounts.']);
+    }
+}
+
+function normalizeAdminPermissions(mixed $permissions): array
+{
+    if (!is_array($permissions)) respond(422, ['error' => 'Admin permissions must be a list.']);
+    return array_values(array_unique(array_filter(
+        $permissions,
+        static fn ($permission): bool => is_string($permission) && in_array($permission, ADMIN_PERMISSION_IDS, true)
+    )));
+}
+
+function normalizeAdminProfile(array $profile): array
+{
+    $permissions = json_decode((string) ($profile['permissions'] ?? '[]'), true);
+    return [
+        'email' => normalizeEmail($profile['email'] ?? ''),
+        'name' => cleanText($profile['name'] ?? '', 160),
+        'role' => cleanText($profile['role'] ?? 'Editor', 40),
+        'permissions' => normalizeAdminPermissions(is_array($permissions) ? $permissions : []),
+        'status' => cleanText($profile['status'] ?? 'Active', 20),
+        'addedAt' => cleanText($profile['addedAt'] ?? '', 10),
+        'master' => cleanText($profile['role'] ?? '', 40) === 'Master Admin',
+    ];
+}
+
+function getAdminProfile(PDO $pdo, string $email): array|null
+{
+    $statement = $pdo->prepare(
+        'SELECT email, name, role, permissions, status, DATE_FORMAT(created_at, \'%Y-%m-%d\') AS addedAt
+         FROM admin_profiles WHERE email = ?'
+    );
+    $statement->execute([normalizeEmail($email)]);
+    $profile = $statement->fetch();
+    return $profile ? normalizeAdminProfile($profile) : null;
 }
 
 function requireCustomer(): void
@@ -837,6 +1140,62 @@ function normalizeStoreData(mixed $data): array
         $normalized[$key] = $data[$key];
     }
     return $normalized;
+}
+
+function storeMediaFile(string $mime, string|false $contents): string
+{
+    $extensions = [
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+        'image/gif' => 'gif',
+        'image/avif' => 'avif',
+        'video/mp4' => 'mp4',
+        'video/webm' => 'webm',
+    ];
+    if (!isset($extensions[$mime]) || $contents === false || $contents === '') {
+        throw new RuntimeException('The uploaded media file could not be validated.');
+    }
+    $mediaDirectory = dirname(__DIR__) . '/uploads/media';
+    if (!is_dir($mediaDirectory) && !mkdir($mediaDirectory, 0755, true) && !is_dir($mediaDirectory)) {
+        throw new RuntimeException('Could not create the media upload directory.');
+    }
+    $filename = bin2hex(random_bytes(16)) . '.' . $extensions[$mime];
+    if (file_put_contents($mediaDirectory . '/' . $filename, $contents, LOCK_EX) === false) {
+        throw new RuntimeException('Could not store the uploaded media file.');
+    }
+    return '/uploads/media/' . $filename;
+}
+
+function externalizeEmbeddedMedia(array &$data): int
+{
+    $count = 0;
+    $externalize = static function (mixed &$value) use (&$count): void {
+        if (!is_string($value) || !preg_match('/^data:(image\/(?:jpeg|png|webp|gif|avif)|video\/(?:mp4|webm));base64,(.+)$/s', $value, $matches)) return;
+        $binary = base64_decode($matches[2], true);
+        if ($binary === false || $binary === '') throw new RuntimeException('An embedded media item is not valid base64 data.');
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $actualMime = $finfo->buffer($binary);
+        if ($actualMime !== $matches[1]) throw new RuntimeException('Embedded media type does not match its file contents.');
+        $value = storeMediaFile($actualMime, $binary);
+        $count += 1;
+    };
+
+    foreach (['products', 'banners', 'promoCards', 'videos'] as $collection) {
+        if (!is_array($data[$collection] ?? null)) continue;
+        foreach ($data[$collection] as &$record) {
+            if (!is_array($record)) continue;
+            foreach (['image', 'video'] as $field) {
+                if (array_key_exists($field, $record)) $externalize($record[$field]);
+            }
+            if (is_array($record['images'] ?? null)) {
+                foreach ($record['images'] as &$image) $externalize($image);
+                unset($image);
+            }
+        }
+        unset($record);
+    }
+    return $count;
 }
 
 function createOrderIdempotently(PDO $pdo, array $input): array

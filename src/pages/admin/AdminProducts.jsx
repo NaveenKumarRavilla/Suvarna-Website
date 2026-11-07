@@ -6,6 +6,7 @@ import { normalizeCategoryId } from '../../data/categories';
 import { formatPrice } from '../../utils/helpers';
 import { isPublishableProduct } from '../../utils/productQuality';
 import { downloadCsv, parseCsv } from '../../utils/csv';
+import { apiRequest } from '../../utils/api';
 import Button from '../../components/common/Button';
 import ImageUpload from '../../components/admin/ImageUpload';
 import { Field, PageHeader, inputCls, tableWrap, tableCls, thCls, tdCls } from '../../components/admin/AdminForm';
@@ -24,7 +25,18 @@ const emptyForm = () => ({
 const stockOptions = ['In Stock', 'Limited Stock', 'Out of Stock'];
 const inlineInputCls = 'w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 outline-none transition focus:border-secondary focus:ring-2 focus:ring-secondary/20';
 const toSpecKey = (key) => key.trim().toLowerCase().replace(/[^a-z0-9]+(.)?/g, (_, char) => char ? char.toUpperCase() : '');
-const productCsvHeaders = ['id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'featured', 'description', 'warranty', 'image', 'images', 'specs', 'rating', 'reviews'];
+const productCsvHeaders = [
+  'id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'featured',
+  'description', 'warranty', 'image', 'images', 'specs',
+  'calculatedRating', 'calculatedReviewCount', 'customerReviewsExportOnly',
+];
+const calculatedProductFields = new Set([
+  'rating',
+  'reviews',
+  'calculatedRating',
+  'calculatedReviewCount',
+  'customerReviewsExportOnly',
+]);
 
 const parseJsonCell = (value, label, rowNumber, fallback) => {
   if (!value.trim()) return fallback;
@@ -42,7 +54,12 @@ const parseProductCsv = (text) => {
     id: 'id', productid: 'id', name: 'name', productname: 'name', brand: 'brand', productbrand: 'brand',
     category: 'category', productcategory: 'category', price: 'price', productprice: 'price',
     oldprice: 'oldPrice', stock: 'stock', featured: 'featured', description: 'description',
-    warranty: 'warranty', image: 'image', images: 'images', specs: 'specs', rating: 'rating', reviews: 'reviews',
+    warranty: 'warranty', image: 'image', images: 'images', specs: 'specs',
+    rating: 'rating', reviews: 'reviews',
+    calculatedrating: 'calculatedRating', averagerating: 'calculatedRating',
+    calculatedreviewcount: 'calculatedReviewCount', reviewcount: 'calculatedReviewCount',
+    customerreviews: 'customerReviewsExportOnly',
+    customerreviewsexportonly: 'customerReviewsExportOnly',
   };
   const headers = rows[0].map((header) => {
     const normalized = header.trim().toLowerCase().replace(/[\s_-]+/g, '');
@@ -84,12 +101,6 @@ const parseProductCsv = (text) => {
     if (featuredValue && !['true', 'false', '1', '0', 'yes', 'no'].includes(featuredValue)) {
       throw new Error(`Row ${rowNumber}: featured must be true or false.`);
     }
-    const optionalNumber = (key, fallback) => {
-      if (!record[key] || !record[key].trim()) return fallback;
-      const value = Number(record[key]);
-      if (!Number.isFinite(value) || value < 0) throw new Error(`Row ${rowNumber}: ${key} must be a non-negative number.`);
-      return value;
-    };
     const product = { name, brand, category, price };
     if (Object.hasOwn(record, 'oldPrice')) product.oldPrice = oldPrice;
     if (Object.hasOwn(record, 'stock')) product.stock = (record.stock || '').trim() || 'In Stock';
@@ -100,10 +111,12 @@ const parseProductCsv = (text) => {
     if (images !== undefined) product.images = images;
     if (!Object.hasOwn(record, 'image') && images !== undefined) product.image = images[0] || '';
     if (specs !== undefined) product.specs = specs;
-    if (Object.hasOwn(record, 'rating')) product.rating = optionalNumber('rating', 4.5);
-    if (Object.hasOwn(record, 'reviews')) product.reviews = optionalNumber('reviews', 0);
     for (const [field, value] of Object.entries(record)) {
-      if (['id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'featured', 'description', 'warranty', 'image', 'images', 'specs', 'rating', 'reviews'].includes(field)) continue;
+      if (
+        ['id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'featured', 'description', 'warranty', 'image', 'images', 'specs']
+          .includes(field) ||
+        calculatedProductFields.has(field)
+      ) continue;
       const trimmed = value.trim();
       if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
         product[field] = parseJsonCell(value, field, rowNumber, value);
@@ -114,7 +127,7 @@ const parseProductCsv = (text) => {
     return {
       id,
       product,
-      fields: new Set(Object.keys(record)),
+      fields: new Set(Object.keys(record).filter((field) => !calculatedProductFields.has(field))),
     };
   });
 };
@@ -124,9 +137,10 @@ const warrantyFormValues = (warranty = '') => {
   if (!match) return { warrantyDuration: '1', warrantyUnit: 'Year', warrantyKind: 'Standard Warranty' };
   return { warrantyDuration: match[1], warrantyUnit: match[2].toLowerCase().startsWith('month') ? 'Month' : 'Year', warrantyKind: /standard/i.test(match[3]) ? 'Standard Warranty' : 'Brand Warranty' };
 };
+const PRODUCT_FORM_DRAFT_KEY = 'suvarna_admin_product_form_draft';
 
 export default function AdminProducts() {
-  const { products, categories, addProduct, updateProduct, deleteProduct } = useAdmin();
+  const { products, categories, saveProductBatch, updateProduct, deleteProduct, setAdminFormDirty } = useAdmin();
   const location = useLocation();
   const navigate = useNavigate();
   const [editing, setEditing] = useState(null);
@@ -139,7 +153,10 @@ export default function AdminProducts() {
   const [importError, setImportError] = useState('');
   const [importStatus, setImportStatus] = useState('');
   const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [savingProduct, setSavingProduct] = useState(false);
   const importInputRef = useRef(null);
+  const restoredDraftRef = useRef(false);
 
   const productCategories = [...new Set(products.map((product) => product.category).filter(Boolean))].sort();
   const categoryOptions = [...new Map([
@@ -165,13 +182,14 @@ export default function AdminProducts() {
   });
   const hiddenFromStorefrontCount = products.filter((product) => !isPublishableProduct(product)).length;
 
-  const openAdd = () => { setEditing(null); setFormMode('add'); setForm(emptyForm()); setFormError(''); setFormOpen(true); };
+  const openAdd = () => { setEditing(null); setFormMode('add'); setForm(emptyForm()); setFormError(''); setAdminFormDirty(true); setFormOpen(true); };
   const openEdit = (product, clone = false) => {
     const productImages = Array.isArray(product.images) && product.images.length ? product.images : product.image ? [product.image] : [];
     const configuration = Object.entries(product.specs || {}).map(([key, value]) => ({ key, value: String(value || '') }));
     setEditing(clone ? null : product);
     setFormMode(clone ? 'clone' : 'edit');
     setFormError('');
+    setAdminFormDirty(true);
     setForm({
       name: clone ? `Copy of ${product.name || ''}` : product.name || '',
       brand: product.brand || '', category: product.category || 'laptops', price: product.price || '', oldPrice: product.oldPrice || '', stock: product.stock || 'In Stock', images: productImages,
@@ -190,12 +208,58 @@ export default function AdminProducts() {
     navigate(location.pathname, { replace: true, state: null });
   }, [location.pathname, location.state, navigate, products]);
 
-  const closeForm = () => { setEditing(null); setFormMode('add'); setFormOpen(false); };
+  useEffect(() => {
+    if (restoredDraftRef.current) return;
+    restoredDraftRef.current = true;
+    if (location.state?.editProductId != null) return;
+    try {
+      const draft = JSON.parse(localStorage.getItem(PRODUCT_FORM_DRAFT_KEY) || 'null');
+      if (!draft?.form || !Array.isArray(draft.form.images) || !Array.isArray(draft.form.configuration)) return;
+      const existing = products.find((product) => String(product.id) === String(draft.editingId));
+      const isEditing = draft.mode === 'edit' && !!existing;
+      setEditing(isEditing ? existing : null);
+      setFormMode(isEditing ? 'edit' : draft.mode === 'clone' ? 'clone' : 'add');
+      setForm({ ...emptyForm(), ...draft.form });
+      setFormError('Recovered an unsaved product form from this browser.');
+      setFormOpen(true);
+      setAdminFormDirty(true);
+    } catch (error) {
+      console.error('Could not restore the saved product form.', error);
+    }
+  }, [location.state, products, setAdminFormDirty]);
+
+  useEffect(() => {
+    if (!formOpen) return;
+    try {
+      localStorage.setItem(PRODUCT_FORM_DRAFT_KEY, JSON.stringify({
+        form,
+        editingId: editing?.id ?? null,
+        mode: formMode,
+      }));
+    } catch (error) {
+      console.error('Could not preserve the product form draft.', error);
+    }
+  }, [editing, form, formMode, formOpen]);
+
+  useEffect(() => () => setAdminFormDirty(false), [setAdminFormDirty]);
+
+  const closeForm = (saved = false) => {
+    if (!saved && !window.confirm('Discard this product form?')) return;
+    setEditing(null);
+    setFormMode('add');
+    setFormOpen(false);
+    setAdminFormDirty(false);
+    try {
+      localStorage.removeItem(PRODUCT_FORM_DRAFT_KEY);
+    } catch (error) {
+      console.error('Could not clear the product form draft.', error);
+    }
+  };
   const set = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.type === 'checkbox' ? event.target.checked : event.target.value }));
   const updateConfiguration = (index, field, value) => setForm((current) => ({ ...current, configuration: current.configuration.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item) }));
   const removeConfiguration = (index) => setForm((current) => ({ ...current, configuration: current.configuration.filter((_, itemIndex) => itemIndex !== index) }));
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
     const cleanedImages = (form.images || []).filter(Boolean);
     const specs = form.configuration.reduce((result, item) => {
@@ -220,20 +284,55 @@ export default function AdminProducts() {
       specs: { ...specs },
       description: form.description.trim(), warranty: `${form.warrantyDuration} ${warrantyUnit} ${form.warrantyKind}`,
     };
-    if (editing) updateProduct(editing.id, payload); else addProduct({ ...payload, rating: 4.5, reviews: 0 });
-    closeForm();
+    setSavingProduct(true);
+    try {
+      const saved = await saveProductBatch([{ ...(editing ? { id: editing.id } : {}), product: payload }]);
+      if (!saved) {
+        setFormError('Product was not saved to the database. Your form values are still here; retry after resolving the shared-store error.');
+        return;
+      }
+      closeForm(true);
+    } finally {
+      setSavingProduct(false);
+    }
   };
 
-  const exportProducts = () => {
-    const headers = [...new Set([...productCsvHeaders, ...products.flatMap((product) => Object.keys(product))])];
-    downloadCsv(
-      'suvarna-products.csv',
-      headers,
-      products.map((product) => headers.map((header) => {
-        const value = product[header];
-        return value && typeof value === 'object' ? JSON.stringify(value) : value ?? '';
-      })),
-    );
+  const exportProducts = async () => {
+    setExporting(true);
+    setImportError('');
+    setImportStatus('');
+    try {
+      const { reviews } = await apiRequest('product-reviews-export');
+      if (!Array.isArray(reviews)) throw new Error('The review export response was invalid.');
+      const reviewsByProduct = new Map();
+      reviews.forEach((review) => {
+        const key = String(review.productId);
+        const productReviews = reviewsByProduct.get(key) || [];
+        productReviews.push(review);
+        reviewsByProduct.set(key, productReviews);
+      });
+      const dynamicHeaders = products.flatMap((product) => Object.keys(product))
+        .filter((header) => !calculatedProductFields.has(header));
+      const headers = [...new Set([...productCsvHeaders, ...dynamicHeaders])];
+      downloadCsv('suvarna-products.csv', headers, products.map((product) => {
+        const productReviews = reviewsByProduct.get(String(product.id)) || [];
+        const rating = productReviews.length
+          ? productReviews.reduce((sum, review) => sum + Number(review.rating), 0) / productReviews.length
+          : 0;
+        return headers.map((header) => {
+          if (header === 'calculatedRating') return productReviews.length ? rating.toFixed(2) : '';
+          if (header === 'calculatedReviewCount') return productReviews.length;
+          if (header === 'customerReviewsExportOnly') return JSON.stringify(productReviews);
+          const value = product[header];
+          return value && typeof value === 'object' ? JSON.stringify(value) : value ?? '';
+        });
+      }));
+      setImportStatus('Product CSV exported. Rating, review count, and customer reviews are export-only data and are ignored during import.');
+    } catch (error) {
+      setImportError(error.message || 'Products and customer reviews could not be exported.');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const importProducts = async (event) => {
@@ -248,18 +347,22 @@ export default function AdminProducts() {
       const currentProducts = new Map(products.map((product) => [String(product.id), product]));
       let updated = 0;
       let added = 0;
-      imported.forEach(({ id, product, fields }) => {
+      const operations = imported.map(({ id, product, fields }) => {
         const existing = id ? currentProducts.get(id) : null;
         if (existing) {
           const patch = Object.fromEntries(Object.entries(product).filter(([field]) => fields.has(field)));
-          updateProduct(existing.id, patch);
-          updated += 1;
-        } else {
-          const newProduct = { ...product };
-          delete newProduct.id;
-          addProduct(newProduct);
-          added += 1;
+          return { id: existing.id, product: patch };
         }
+        const newProduct = { ...product };
+        delete newProduct.id;
+        return { product: newProduct };
+      });
+      if (!await saveProductBatch(operations)) {
+        throw new Error('Products were not saved to the database. Resolve the shared-store error and retry the import.');
+      }
+      imported.forEach(({ id }) => {
+        if (id && currentProducts.has(id)) updated += 1;
+        else added += 1;
       });
       setImportStatus(`Imported ${imported.length} product${imported.length === 1 ? '' : 's'}: ${added} added, ${updated} updated.`);
     } catch (error) {
@@ -276,7 +379,7 @@ export default function AdminProducts() {
         subtitle={`${displayedProducts.length} of ${products.length} products shown`}
         action={
           <>
-            <Button type="button" variant="secondary" size="md" onClick={exportProducts}><Download size={16} />Export CSV</Button>
+            <Button type="button" variant="secondary" size="md" onClick={exportProducts} disabled={exporting}><Download size={16} />{exporting ? 'Exporting...' : 'Export CSV'}</Button>
             <Button type="button" variant="secondary" size="md" onClick={() => importInputRef.current?.click()} disabled={importing}>
               <Upload size={16} />{importing ? 'Importing...' : 'Import CSV'}
             </Button>
@@ -296,7 +399,7 @@ export default function AdminProducts() {
         }
       />
 
-      <p className="mb-4 text-xs text-slate-500">Import merges rows by product ID; matching IDs update products, and new products receive generated IDs. Export includes all product fields, including image data and specifications. Use the exported CSV as the import template.</p>
+      <p className="mb-4 text-xs text-slate-500">Import merges rows by product ID; matching IDs update supplied product fields, and new products receive generated IDs. Export includes product fields, image data, specifications, and customer reviews. Calculated rating, review count, and customer reviews are export-only and ignored during import.</p>
       {importError && <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{importError}</p>}
       {importStatus && <p role="status" className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{importStatus}</p>}
 
@@ -371,7 +474,7 @@ export default function AdminProducts() {
               <section className="rounded-xl border border-slate-200 p-3"><Field label="Description"><textarea value={form.description} onChange={set('description')} rows="3" className={inputCls} placeholder="Describe the product, its use cases, and key benefits." /></Field></section>
               <section className="rounded-xl border border-slate-200 p-3"><h3 className="mb-2 text-sm font-bold text-primary">Product Images</h3><ImageUpload label="Add Image" value={form.images} multiple compact recommendedWidth={1200} recommendedHeight={1200} minimumWidth={600} minimumHeight={600} maximumWidth={2000} maximumHeight={2000} onChange={(value) => setForm((current) => ({ ...current, images: value }))} /></section>
             </div>
-            <div className="flex flex-wrap gap-3 border-t border-slate-100 pt-5"><Button type="submit" variant="primary">{editing ? 'Save Changes' : 'Add Product'}</Button><Button type="button" variant="ghost" onClick={closeForm}>Cancel</Button></div>
+            <div className="flex flex-wrap gap-3 border-t border-slate-100 pt-5"><Button type="submit" variant="primary" disabled={savingProduct}>{savingProduct ? 'Saving…' : editing ? 'Save Changes' : 'Add Product'}</Button><Button type="button" variant="ghost" onClick={closeForm} disabled={savingProduct}>Cancel</Button></div>
           </form>
         </section>
       )}

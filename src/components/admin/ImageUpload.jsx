@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { UploadCloud, X, Link2, Image as ImageIcon } from 'lucide-react';
-import { getImageDimensions, readImageFile } from '../../utils/imageUpload';
+import { getImageDimensions } from '../../utils/imageUpload';
+import { uploadMediaFile } from '../../utils/media';
 
 /**
  * Reusable image picker: upload from device (stored as data URL) OR paste a URL.
@@ -24,6 +25,7 @@ export default function ImageUpload({
   const [showUrl, setShowUrl] = useState(false);
   const [url, setUrl] = useState('');
   const [imageMeta, setImageMeta] = useState(null);
+  const [uploading, setUploading] = useState(false);
 
   const previewImages = Array.isArray(value) ? value : value ? [value] : [];
   const isDataUrl = typeof value === 'string' && value.startsWith('data:');
@@ -43,6 +45,7 @@ export default function ImageUpload({
     if (!files.length) return;
     setError('');
 
+    setUploading(true);
     try {
       const dimensions = await getImageDimensions(files[0]);
       setImageMeta(dimensions);
@@ -68,16 +71,17 @@ export default function ImageUpload({
       if (multiple) {
         const uploaded = [];
         for (const file of files) {
-          uploaded.push(await readImageFile(file));
+          uploaded.push(await uploadMediaFile(file));
         }
         const existing = Array.isArray(value) ? value : value ? [value] : [];
         onChange([...existing, ...uploaded]);
       } else {
-        const dataUrl = await readImageFile(files[0]);
-        onChange(dataUrl);
+        onChange(await uploadMediaFile(files[0]));
       }
-    } catch {
-      setError('Please choose a valid image file.');
+    } catch (uploadError) {
+      setError(uploadError.message || 'Please choose a valid image file.');
+    } finally {
+      setUploading(false);
     }
 
     e.target.value = '';
@@ -145,7 +149,7 @@ export default function ImageUpload({
             className={`flex w-full flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 text-slate-500 transition hover:border-secondary hover:text-secondary ${compact ? 'h-20' : 'h-28'}`}
           >
             <UploadCloud size={20} />
-            <span className="text-[11px] font-semibold">Add image</span>
+            <span className="text-[11px] font-semibold">{uploading ? 'Uploading…' : 'Add image'}</span>
           </button>
         )}
       </div>
@@ -157,8 +161,8 @@ export default function ImageUpload({
           className="flex h-36 w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 text-slate-500 transition hover:border-secondary hover:text-secondary"
         >
           <UploadCloud size={26} />
-          <span className="text-xs font-semibold">Upload from device</span>
-          <span className="text-[10px] text-slate-400">PNG, JPG up to ~5MB</span>
+          <span className="text-xs font-semibold">{uploading ? 'Uploading…' : 'Upload from device'}</span>
+          <span className="text-[10px] text-slate-400">PNG, JPG, WebP up to 4 MB</span>
         </button>
       )}
 
@@ -168,6 +172,7 @@ export default function ImageUpload({
         accept="image/*"
         capture="environment"
         multiple={multiple}
+        disabled={uploading}
         onChange={handleFile}
         className="hidden"
         aria-label={`${label} file input`}

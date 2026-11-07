@@ -4,6 +4,7 @@ import { CartProvider } from './context/CartContext';
 import { AdminProvider } from './context/AdminContext';
 import { AuthProvider } from './context/AuthContext';
 import { WishlistProvider } from './context/WishlistContext';
+import { useAdmin } from './context/AdminContext';
 import Header from './components/layout/Header';
 import CategoryNav from './components/layout/CategoryNav';
 import Footer from './components/layout/Footer';
@@ -53,11 +54,46 @@ export default function App() {
         <AuthProvider>
           <WishlistProvider>
             <CartProvider>
-              <ScrollToTop />
-              <div className="flex min-h-screen flex-col">
-                <Header />
-                <CategoryNav />
-                <main className="flex-1">
+              <ApplicationShell />
+            </CartProvider>
+          </WishlistProvider>
+        </AuthProvider>
+      </AdminProvider>
+    </BrowserRouter>
+  );
+}
+
+function ApplicationShell() {
+  const { pathname } = useLocation();
+  const { storefrontReady, storefrontDataAvailable, storefrontError } = useAdmin();
+  const isAdminRoute = pathname.startsWith('/admin');
+
+  if (!isAdminRoute && !storefrontReady) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+        <p role="status" className="rounded-lg bg-white p-6 text-sm text-slate-600 shadow-card">
+          Loading the latest store catalogue…
+        </p>
+      </main>
+    );
+  }
+  if (!isAdminRoute && !storefrontDataAvailable) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+        <p role="alert" className="max-w-xl rounded-lg bg-white p-6 text-sm text-red-700 shadow-card">
+          {storefrontError || 'Store data could not be confirmed. Refresh this page or contact the store administrator.'}
+        </p>
+      </main>
+    );
+  }
+
+  return (
+    <>
+      <ScrollToTop />
+      <div className="flex min-h-screen flex-col">
+        <Header />
+        <CategoryNav />
+        <main className="flex-1">
                   <Routes>
                     <Route path="/" element={<Home />} />
                     <Route path="/products" element={<Products />} />
@@ -95,14 +131,10 @@ export default function App() {
                     </Route>
                     <Route path="*" element={<Home />} />
                   </Routes>
-                </main>
-                <Footer />
-                <WhatsAppButton />
-              </div>
-            </CartProvider>
-          </WishlistProvider>
-        </AuthProvider>
-      </AdminProvider>
-    </BrowserRouter>
+        </main>
+        <Footer />
+        <WhatsAppButton />
+      </div>
+    </>
   );
 }

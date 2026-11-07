@@ -5,7 +5,14 @@ export const FREE_DELIVERY_THRESHOLD = 50000;
 export const DELIVERY_FEE = 499;
 
 export default function useCart() {
-  const { items, addItem, removeItem, updateQty, clearCart } = useCartContext();
+  const {
+    items,
+    addItem,
+    removeItem,
+    updateQty,
+    clearCart,
+    acknowledgePriceChanges,
+  } = useCartContext();
 
   const totals = useMemo(() => {
     const count = items.reduce((sum, i) => sum + i.qty, 0);
@@ -20,5 +27,5 @@ export default function useCart() {
     return { count, subtotal, savings, delivery, total };
   }, [items]);
 
-  return { items, addItem, removeItem, updateQty, clearCart, ...totals };
+  return { items, addItem, removeItem, updateQty, clearCart, acknowledgePriceChanges, ...totals };
 }

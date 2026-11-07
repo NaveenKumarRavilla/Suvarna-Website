@@ -9,6 +9,7 @@ import { isPublishableProduct } from '../utils/productQuality';
 
 const AdminContext = createContext(null);
 const STORAGE_KEY = 'suvarna_admin_store';
+const SHARED_DRAFT_STORAGE_KEY = 'suvarna_admin_shared_draft';
 const SESSION_KEY = 'suvarna_admin_user';
 const SHARED_DATA_KEYS = ['products', 'banners', 'promoCards', 'offers', 'videos', 'orders', 'enquiries', 'categories', 'settings', 'policies'];
 
@@ -178,6 +179,17 @@ const loadStore = () => {
 const nextId = (list) =>
   list.length ? Math.max(...list.map((i) => Number(i.id) || 0)) + 1 : 1;
 
+const createPermanentProductId = () => {
+  const cryptoApi = globalThis.crypto;
+  if (!cryptoApi?.getRandomValues) throw new Error('Secure product ID generation is unavailable in this browser.');
+  const suffix = cryptoApi.randomUUID
+    ? cryptoApi.randomUUID()
+    : [...cryptoApi.getRandomValues(new Uint8Array(16))]
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('');
+  return `PRD-${suffix}`;
+};
+
 const normalizeEmail = (email = '') => String(email || '').trim().toLowerCase();
 
 const dedupeBanners = (items = []) => {
@@ -220,21 +232,9 @@ const mergeSharedData = (store, data) => {
   }
   const sharedSettings = shared.settings;
   if (sharedSettings) {
-    const phoneDigits = String(sharedSettings.phone || '').replace(/\D/g, '');
-    const whatsappDigits = String(sharedSettings.whatsapp || '').replace(/\D/g, '');
-    const address = String(sharedSettings.address || '');
     shared.settings = {
       ...store.settings,
       ...sharedSettings,
-      ...(phoneDigits === '919182301422' || phoneDigits === '9182301422'
-        ? { phone: defaultSettings.phone }
-        : {}),
-      ...(whatsappDigits === '919182301422'
-        ? { whatsapp: defaultSettings.whatsapp }
-        : {}),
-      ...(/beaide|secundrabad/i.test(address)
-        ? { address: defaultSettings.address }
-        : {}),
     };
   }
   return { ...store, ...shared };
@@ -253,9 +253,13 @@ export function AdminProvider({ children }) {
   const storeRef = useRef(store);
   storeRef.current = store;
   const [sharedStoreReady, setSharedStoreReady] = useState(false);
+  const [storefrontReady, setStorefrontReady] = useState(false);
+  const [storefrontDataAvailable, setStorefrontDataAvailable] = useState(false);
+  const [storefrontError, setStorefrontError] = useState('');
   const [sharedStoreSaving, setSharedStoreSaving] = useState(false);
   const [sharedStoreError, setSharedStoreError] = useState('');
   const [sharedStoreConflict, setSharedStoreConflict] = useState(false);
+  const [adminFormDirty, setAdminFormDirty] = useState(false);
   const lastSharedDataRef = useRef('');
   const lastSharedRevisionRef = useRef(0);
   const sharedStoreConflictRef = useRef(false);
@@ -273,8 +277,20 @@ export function AdminProvider({ children }) {
   });
   const currentUserRef = useRef(currentUser);
   currentUserRef.current = currentUser;
+  const authGenerationRef = useRef(0);
   const sharedStoreReadyRef = useRef(sharedStoreReady);
   sharedStoreReadyRef.current = sharedStoreReady;
+  const persistSharedDraft = (data) => {
+    try {
+      localStorage.setItem(SHARED_DRAFT_STORAGE_KEY, JSON.stringify({
+        data,
+        baseRevision: lastSharedRevisionRef.current,
+        baseData: lastSharedDataRef.current,
+      }));
+    } catch (error) {
+      console.error('Could not preserve the unsaved admin draft.', error);
+    }
+  };
 
   const flushSharedStore = (snapshot = getSharedData(storeRef.current)) => {
     pendingSharedDataRef.current = snapshot;
@@ -306,10 +322,16 @@ export function AdminProvider({ children }) {
         setSharedStoreError('');
         setSharedStoreConflict(false);
         sharedStoreConflictRef.current = false;
+        try {
+          localStorage.removeItem(SHARED_DRAFT_STORAGE_KEY);
+        } catch (error) {
+          console.error('Could not clear the saved admin draft.', error);
+        }
         window.clearTimeout(saveRetryTimeoutRef.current);
         saveRetryTimeoutRef.current = null;
       } catch (error) {
         pendingSharedDataRef.current = getSharedData(storeRef.current);
+        persistSharedDraft(pendingSharedDataRef.current);
         if (error.status === 409 || error.status === 428) {
           sharedStoreConflictRef.current = true;
           setSharedStoreConflict(true);
@@ -392,17 +414,23 @@ export function AdminProvider({ children }) {
 
   const login = async (email, password) => {
     const clean = email.trim().toLowerCase();
-    const admin = store.admins.find((item) => item.email === clean);
-    if (!admin) return { ok: false, error: 'This email does not have admin access.' };
-    if (admin.status !== 'Active') return { ok: false, error: 'Complete the invitation setup before logging in.' };
+    let result;
     try {
-      await apiRequest('admin-login', { method: 'POST', body: { email: clean, password } });
+      result = await apiRequest('admin-login', { method: 'POST', body: { email: clean, password } });
     } catch (error) {
       return { ok: false, error: error.message };
+    }
+    if (result.admin) {
+      setStore((current) => ({
+        ...current,
+        admins: [...current.admins.filter((admin) => normalizeEmail(admin.email) !== clean), result.admin],
+      }));
     }
     sharedStoreConflictRef.current = false;
     setSharedStoreConflict(false);
     setSharedStoreReady(false);
+    authGenerationRef.current += 1;
+    currentUserRef.current = clean;
     setCurrentUser(clean);
     try {
       sessionStorage.setItem(SESSION_KEY, clean);
@@ -418,9 +446,17 @@ export function AdminProvider({ children }) {
         method: 'POST',
         body: { email: email.trim().toLowerCase(), password, setupKey },
       });
+      if (result.admin) {
+        setStore((current) => ({
+          ...current,
+          admins: [...current.admins.filter((admin) => normalizeEmail(admin.email) !== normalizeEmail(result.email)), result.admin],
+        }));
+      }
       sharedStoreConflictRef.current = false;
       setSharedStoreConflict(false);
       setSharedStoreReady(false);
+      authGenerationRef.current += 1;
+      currentUserRef.current = result.email;
       setCurrentUser(result.email);
       try {
         sessionStorage.setItem(SESSION_KEY, result.email);
@@ -446,6 +482,8 @@ export function AdminProvider({ children }) {
       }
     }
     setSharedStoreReady(false);
+    authGenerationRef.current += 1;
+    currentUserRef.current = null;
     setCurrentUser(null);
     try {
       sessionStorage.removeItem(SESSION_KEY);
@@ -459,14 +497,89 @@ export function AdminProvider({ children }) {
     }
   };
 
+  const invalidateAdminSession = () => {
+    authGenerationRef.current += 1;
+    currentUserRef.current = null;
+    setCurrentUser(null);
+    setSharedStoreReady(false);
+    try {
+      sessionStorage.removeItem(SESSION_KEY);
+    } catch {
+      /* storage unavailable */
+    }
+  };
+
   const refreshStorefrontData = async () => {
     if (currentUserRef.current && sharedStoreReadyRef.current) {
       return refreshSharedStoreSnapshot(lastSharedRevisionRef.current);
     }
+    const requestGeneration = authGenerationRef.current;
+    if (currentUserRef.current) return false;
     const { data } = await apiRequest('storefront-data');
+    if (requestGeneration !== authGenerationRef.current || currentUserRef.current) return false;
+    setStorefrontReady(true);
+    setStorefrontDataAvailable(Boolean(data));
+    setStorefrontError(data ? '' : 'Storefront data is not initialized yet. Please try again later.');
     if (data) setStore((current) => mergeSharedData(current, data));
     return Boolean(data);
   };
+
+  const commitSharedMutation = async (updateStore) => {
+    if (!currentUserRef.current || !sharedStoreReadyRef.current) {
+      setSharedStoreError('Wait for the shared store to finish loading before saving.');
+      return false;
+    }
+    if (sharedStoreConflictRef.current) {
+      setSharedStoreError('Reload the latest shared data and resolve the save conflict before saving.');
+      return false;
+    }
+    let nextStore;
+    try {
+      nextStore = updateStore(storeRef.current);
+    } catch (error) {
+      setSharedStoreError(error.message || 'The shared store update could not be prepared.');
+      console.error('Could not prepare shared store update.', error);
+      return false;
+    }
+    storeRef.current = nextStore;
+    setStore(nextStore);
+    persistStore(nextStore);
+    const snapshot = getSharedData(nextStore);
+    persistSharedDraft(snapshot);
+    try {
+      await flushSharedStore(snapshot);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const saveProductBatch = async (operations) => commitSharedMutation((current) => {
+    const products = [...current.products];
+    for (const operation of operations) {
+      if (operation.id != null) {
+        const index = products.findIndex((product) => String(product.id) === String(operation.id));
+        if (index >= 0) products[index] = { ...products[index], ...operation.product };
+        continue;
+      }
+      products.push({ ...operation.product, id: createPermanentProductId() });
+    }
+    return { ...current, products };
+  });
+
+  const saveBannerBatch = async (operations) => commitSharedMutation((current) => {
+    let banners = [...current.banners];
+    for (const operation of operations) {
+      if (operation.id != null) {
+        banners = banners.map((banner) =>
+          String(banner.id) === String(operation.id) ? { ...banner, ...operation.banner } : banner
+        );
+      } else {
+        banners.push({ ...operation.banner, id: nextId(banners) });
+      }
+    }
+    return { ...current, banners: dedupeBanners(banners) };
+  });
 
   useEffect(() => {
     if (!currentUser) return;
@@ -475,9 +588,28 @@ export function AdminProvider({ children }) {
     setSharedStoreReady(false);
     const loadAdminStore = async () => {
       try {
-        const { email } = await apiRequest('admin-session');
+        const session = await apiRequest('admin-session');
+        const { email } = session;
         if (normalizeEmail(email) !== normalizeEmail(currentUser)) {
           throw Object.assign(new Error('The active server admin does not match this browser session.'), { status: 401 });
+        }
+        if (session.admin) {
+          setStore((current) => ({
+            ...current,
+            admins: [...current.admins.filter((admin) => normalizeEmail(admin.email) !== normalizeEmail(email)), session.admin],
+          }));
+        }
+        if (session.admin?.master) {
+          const { admins } = await apiRequest('admin-invites');
+          if (!Array.isArray(admins)) throw new Error('The server returned an invalid admin list.');
+          setStore((current) => ({ ...current, admins }));
+        }
+        const mediaPermissions = ['products', 'banners', 'promo-cards', 'videos', 'offers'];
+        if (
+          session.admin?.master ||
+          session.admin?.permissions?.some((permission) => mediaPermissions.includes(permission))
+        ) {
+          await apiRequest('admin-media-migrate', { method: 'POST', body: {} });
         }
         const { data, revision = 0 } = await apiRequest('admin-data');
         if (!active) return;
@@ -486,7 +618,29 @@ export function AdminProvider({ children }) {
         setSharedStoreConflict(false);
         if (data) {
           lastSharedDataRef.current = serializeSharedData(data);
-          setStore((current) => mergeSharedData(current, data));
+          let recoveredData = data;
+          try {
+            const draft = JSON.parse(localStorage.getItem(SHARED_DRAFT_STORAGE_KEY) || 'null');
+            if (draft?.data) {
+              const serverBaseline = serializeSharedData(data);
+              if (serializeSharedData(draft.data) === serverBaseline) {
+                localStorage.removeItem(SHARED_DRAFT_STORAGE_KEY);
+              } else {
+                recoveredData = { ...data, ...draft.data };
+                if (
+                  Number(draft.baseRevision) !== Number(revision) ||
+                  draft.baseData !== serverBaseline
+                ) {
+                  sharedStoreConflictRef.current = true;
+                  setSharedStoreConflict(true);
+                  setSharedStoreError('Recovered unsaved changes are preserved in this tab, but the server changed since this draft was created. Resolve the save conflict before editing further.');
+                }
+              }
+            }
+          } catch (draftError) {
+            console.error('Could not restore the saved admin draft.', draftError);
+          }
+          setStore((current) => mergeSharedData(current, recoveredData));
         } else {
           const initialData = getSharedData(storeRef.current);
           const result = await apiRequest('admin-data', {
@@ -496,18 +650,12 @@ export function AdminProvider({ children }) {
           lastSharedRevisionRef.current = Number(result.revision) || 1;
           lastSharedDataRef.current = serializeSharedData(initialData);
         }
-        setSharedStoreError('');
+        if (!sharedStoreConflictRef.current) setSharedStoreError('');
         setSharedStoreReady(true);
       } catch (error) {
         if (!active) return;
         if (error.status === 401 && active) {
-          setCurrentUser(null);
-          setSharedStoreReady(false);
-          try {
-            sessionStorage.removeItem(SESSION_KEY);
-          } catch {
-            /* storage unavailable */
-          }
+          invalidateAdminSession();
           return;
         }
         setSharedStoreError(error.message);
@@ -529,7 +677,12 @@ export function AdminProvider({ children }) {
       try {
         if (active) await refreshStorefrontData();
       } catch (error) {
-        if (active) console.error('Could not refresh shared storefront data.', error);
+        if (active && !currentUserRef.current) {
+          setStorefrontReady(true);
+          setStorefrontDataAvailable(false);
+          setStorefrontError(error.message);
+          console.error('Could not refresh shared storefront data.', error);
+        }
       }
     };
     refreshStorefront();
@@ -544,6 +697,7 @@ export function AdminProvider({ children }) {
     if (!currentUser || !sharedStoreReady) return undefined;
     const serialized = serializeSharedData(getSharedData(store));
     if (serialized === lastSharedDataRef.current) return undefined;
+    persistSharedDraft(getSharedData(store));
     flushSharedStore(getSharedData(store)).catch(() => {});
     return undefined;
   }, [store, currentUser, sharedStoreReady]);
@@ -578,7 +732,9 @@ export function AdminProvider({ children }) {
           setSharedStoreError('The shared store changed in another admin session. Your edits are still in this tab; do not refresh or close it before recovering them.');
         }
       } catch (error) {
-        if (active && error.status !== 401) {
+        if (active && error.status === 401) {
+          invalidateAdminSession();
+        } else if (active) {
           setSharedStoreError(error.message);
           console.error('Could not refresh shared admin data.', error);
         }
@@ -615,6 +771,19 @@ export function AdminProvider({ children }) {
     return () => window.removeEventListener('storage', syncStore);
   }, []);
 
+  useEffect(() => {
+    if (!currentUser || !sharedStoreReady) return undefined;
+    const handleBeforeUnload = (event) => {
+      const currentData = serializeSharedData(getSharedData(storeRef.current));
+      const unsaved = currentData !== lastSharedDataRef.current || savingSharedDataRef.current || sharedStoreConflictRef.current || adminFormDirty;
+      if (!unsaved) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [currentUser, sharedStoreReady, store, sharedStoreSaving, sharedStoreError, adminFormDirty]);
+
   const value = useMemo(() => {
     const currentAdmin = store.admins.find(
       (admin) => admin.email.toLowerCase() === (currentUser || '').toLowerCase()
@@ -629,7 +798,17 @@ export function AdminProvider({ children }) {
     return {
       currentUser,
       sharedStoreReady,
+      storefrontReady,
+      storefrontDataAvailable,
+      storefrontError,
       sharedStoreSaving,
+      sharedStoreDirty: Boolean(currentUser) && (
+        serializeSharedData(getSharedData(store)) !== lastSharedDataRef.current ||
+        sharedStoreSaving ||
+        sharedStoreConflict ||
+        adminFormDirty
+      ),
+      setAdminFormDirty,
       sharedStoreError,
       sharedStoreConflict,
       isAdmin,
@@ -666,60 +845,59 @@ export function AdminProvider({ children }) {
 
       /* Admins */
       admins: store.admins,
-      addAdmin: ({ email, name = '', role = 'Editor', permissions = ['products', 'offers'] }) => {
-        const clean = email.trim().toLowerCase();
-        const inviteCode = `SIE-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-        setStore((s) => {
-          if (!clean || s.admins.some((a) => a.email === clean)) return s;
-          return {
-            ...s,
-            admins: [
-              ...s.admins,
-              {
-                email: clean,
-                name: name.trim() || clean.split('@')[0],
-                addedAt: new Date().toISOString().slice(0, 10),
-                master: false,
-                role,
-                permissions,
-                password: '',
-                inviteCode,
-                status: 'Invited',
-              },
-            ],
-          };
-        });
-        return inviteCode;
-      },
-      completeInvitation: ({ email, inviteCode, password, name }) => {
-        const clean = email.trim().toLowerCase();
-        const admin = store.admins.find((item) => item.email === clean);
-        if (!admin || admin.status !== 'Invited' || admin.inviteCode !== inviteCode.trim().toUpperCase()) {
-          return { ok: false, error: 'Invalid invitation email or code.' };
+      addAdmin: async ({ email, name = '', role = 'Editor', permissions = ['products', 'offers'] }) => {
+        try {
+          const result = await apiRequest('admin-invite', {
+            method: 'POST',
+            body: { email, name, role, permissions },
+          });
+          setStore((current) => ({
+            ...current,
+            admins: [...current.admins.filter((admin) => normalizeEmail(admin.email) !== normalizeEmail(email)), result.admin],
+          }));
+          return { ok: true, inviteCode: result.inviteCode };
+        } catch (error) {
+          return { ok: false, error: error.message };
         }
-        if (!password || password.length < 8) {
-          return { ok: false, error: 'Password must be at least 8 characters.' };
-        }
-        setStore((s) => ({
-          ...s,
-          admins: s.admins.map((item) => item.email === clean
-            ? { ...item, name: name?.trim() || item.name, password, status: 'Active', inviteCode: '' }
-            : item),
-        }));
-        return { ok: true };
       },
-      updateAdmin: (email, patch) =>
-        setStore((s) => ({
-          ...s,
-          admins: s.admins.map((admin) => admin.email === email && !admin.master
-            ? { ...admin, ...patch, permissions: patch.permissions || admin.permissions }
-            : admin),
-        })),
-      removeAdmin: (email) =>
-        setStore((s) => ({
-          ...s,
-          admins: s.admins.filter((a) => a.master || a.email !== email),
-        })),
+      completeInvitation: async ({ email, inviteCode, password, name }) => {
+        try {
+          await apiRequest('admin-invitation-complete', {
+            method: 'POST',
+            body: { email, inviteCode, password, name },
+          });
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: error.message };
+        }
+      },
+      updateAdmin: async (email, patch) => {
+        try {
+          const result = await apiRequest('admin-update', {
+            method: 'POST',
+            body: { email, role: patch.role || 'Editor', permissions: patch.permissions || [] },
+          });
+          setStore((current) => ({
+            ...current,
+            admins: [...current.admins.filter((admin) => normalizeEmail(admin.email) !== normalizeEmail(email)), result.admin],
+          }));
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: error.message };
+        }
+      },
+      removeAdmin: async (email) => {
+        try {
+          await apiRequest('admin-remove', { method: 'POST', body: { email } });
+          setStore((current) => ({
+            ...current,
+            admins: current.admins.filter((admin) => normalizeEmail(admin.email) !== normalizeEmail(email)),
+          }));
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: error.message };
+        }
+      },
 
       /* Generic collection CRUD helpers */
       products: store.products,
@@ -746,30 +924,16 @@ export function AdminProvider({ children }) {
         return true;
       },
       storefrontProducts: store.products.filter(isPublishableProduct),
-      addProduct: (item) =>
-        setStore((s) => ({
-          ...s,
-          products: [...s.products, { ...item, id: nextId(s.products) }],
-        })),
-      updateProduct: (id, patch) =>
-        setStore((s) => ({
-          ...s,
-          products: s.products.map((p) => (p.id === id ? { ...p, ...patch } : p)),
-        })),
+      saveProductBatch,
+      addProduct: (item) => saveProductBatch([{ product: item }]),
+      updateProduct: (id, patch) => saveProductBatch([{ id, product: patch }]),
       deleteProduct: (id) =>
         setStore((s) => ({ ...s, products: s.products.filter((p) => p.id !== id) })),
 
       banners: store.banners,
-      addBanner: (item) =>
-        setStore((s) => ({
-          ...s,
-          banners: dedupeBanners([...s.banners, { ...item, id: nextId(s.banners) }]),
-        })),
-      updateBanner: (id, patch) =>
-        setStore((s) => ({
-          ...s,
-          banners: dedupeBanners(s.banners.map((b) => (b.id === id ? { ...b, ...patch } : b))),
-        })),
+      saveBannerBatch,
+      addBanner: (item) => saveBannerBatch([{ banner: item }]),
+      updateBanner: (id, patch) => saveBannerBatch([{ id, banner: patch }]),
       deleteBanner: (id) =>
         setStore((s) => ({ ...s, banners: dedupeBanners(s.banners.filter((b) => b.id !== id)) })),
 
@@ -996,7 +1160,7 @@ export function AdminProvider({ children }) {
 
       settings: store.settings,
       updateSettings: (patch) =>
-        setStore((s) => ({ ...s, settings: { ...s.settings, ...patch } })),
+        commitSharedMutation((s) => ({ ...s, settings: { ...s.settings, ...patch } })),
 
       policies: store.policies,
       addPolicy: (id, policy) =>
@@ -1018,7 +1182,18 @@ export function AdminProvider({ children }) {
           return { ...s, policies };
         }),
     };
-  }, [store, currentUser, sharedStoreReady, sharedStoreSaving, sharedStoreError]);
+  }, [
+    store,
+    currentUser,
+    sharedStoreReady,
+    storefrontReady,
+    storefrontDataAvailable,
+    storefrontError,
+    sharedStoreSaving,
+    sharedStoreError,
+    sharedStoreConflict,
+    adminFormDirty,
+  ]);
 
   return <AdminContext.Provider value={value}>{children}</AdminContext.Provider>;
 }

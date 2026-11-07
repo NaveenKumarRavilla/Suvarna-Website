@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Save, CheckCircle2, Crown, Trash2, UserPlus } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 import Button from '../../components/common/Button';
@@ -9,23 +9,88 @@ import {
   inputCls,
 } from '../../components/admin/AdminForm';
 
+const SETTINGS_FORM_DRAFT_KEY = 'suvarna_admin_settings_form_draft';
+
 export default function AdminSettings() {
-  const { settings, updateSettings, admins, addAdmin, removeAdmin, isMaster } = useAdmin();
+  const { settings, updateSettings, admins, addAdmin, removeAdmin, isMaster, setAdminFormDirty } = useAdmin();
   const [form, setForm] = useState(settings);
   const [saved, setSaved] = useState(false);
   const [newAdmin, setNewAdmin] = useState('');
   const [notice, setNotice] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [removingAdmin, setRemovingAdmin] = useState('');
+  const restoredDraftRef = useRef(false);
 
-  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  useEffect(() => () => setAdminFormDirty(false), [setAdminFormDirty]);
 
-  const handleSave = (e) => {
+  useEffect(() => {
+    if (restoredDraftRef.current) return;
+    restoredDraftRef.current = true;
+    try {
+      const draft = JSON.parse(localStorage.getItem(SETTINGS_FORM_DRAFT_KEY) || 'null');
+      if (!draft || typeof draft !== 'object') return;
+      const recovered = { ...settings, ...draft };
+      setForm(recovered);
+      setAdminFormDirty(JSON.stringify(recovered) !== JSON.stringify(settings));
+      setNotice('Recovered unsaved store settings from this browser.');
+    } catch (error) {
+      console.error('Could not restore the saved settings form.', error);
+    }
+  }, [setAdminFormDirty, settings]);
+
+  useEffect(() => {
+    if (JSON.stringify(form) === JSON.stringify(settings)) {
+      try {
+        localStorage.removeItem(SETTINGS_FORM_DRAFT_KEY);
+      } catch (error) {
+        console.error('Could not clear the settings form draft.', error);
+      }
+      return;
+    }
+    try {
+      localStorage.setItem(SETTINGS_FORM_DRAFT_KEY, JSON.stringify(form));
+    } catch (error) {
+      console.error('Could not preserve the settings form draft.', error);
+    }
+  }, [form, settings]);
+
+  const set = (key) => (e) => {
+    const value = e.target.value;
+    const next = { ...form, [key]: value };
+    setForm(next);
+    setAdminFormDirty(JSON.stringify(next) !== JSON.stringify(settings));
+  };
+
+  const handleSave = async (e) => {
     e.preventDefault();
-    updateSettings(form);
+    setSavingSettings(true);
+    const result = await updateSettings(form);
+    setSavingSettings(false);
+    if (!result) {
+      setSaved(false);
+      setNotice('Settings were not saved to the database. Your form values are still here; retry after resolving the shared-store error.');
+      return;
+    }
+    setAdminFormDirty(false);
+    try {
+      localStorage.removeItem(SETTINGS_FORM_DRAFT_KEY);
+    } catch (error) {
+      console.error('Could not clear the settings form draft.', error);
+    }
+    setNotice('');
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
 
-  const handleAddAdmin = (e) => {
+  const handleRemoveAdmin = async (email) => {
+    if (!window.confirm(`Remove admin access for ${email}?`)) return;
+    setRemovingAdmin(email);
+    const result = await removeAdmin(email);
+    setRemovingAdmin('');
+    setNotice(result.ok ? `Admin access removed for ${email}.` : `Could not remove admin access: ${result.error}`);
+  };
+
+  const handleAddAdmin = async (e) => {
     e.preventDefault();
     const clean = newAdmin.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) {
@@ -36,9 +101,13 @@ export default function AdminSettings() {
       setNotice('This email already has admin access.');
       return;
     }
-    const inviteCode = addAdmin({ email: clean });
+    const result = await addAdmin({ email: clean });
+    if (!result.ok) {
+      setNotice(result.error);
+      return;
+    }
     setNewAdmin('');
-    setNotice(`Invitation created for ${clean}. Share invite code: ${inviteCode}`);
+    setNotice(`Invitation created for ${clean}. Share invite code: ${result.inviteCode}`);
   };
 
   return (
@@ -83,9 +152,9 @@ export default function AdminSettings() {
           </div>
         </div>
         <div className="mt-5 flex items-center gap-3">
-          <Button type="submit" variant="primary">
+          <Button type="submit" variant="primary" disabled={savingSettings}>
             <Save size={16} />
-            Save Settings
+            {savingSettings ? 'Saving…' : 'Save Settings'}
           </Button>
           {saved && (
             <span role="status" className="flex items-center gap-1.5 text-sm font-semibold text-emerald-600">
@@ -140,13 +209,14 @@ export default function AdminSettings() {
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <span className="text-xs text-slate-400">{a.addedAt}</span>
-                <StatusBadge status="Active" />
+                  <StatusBadge status={a.status || 'Active'} />
                 {!a.master && (
                   <button
                     type="button"
-                    onClick={() => removeAdmin(a.email)}
-                    aria-label={`Remove admin access for ${a.email}`}
-                    className="rounded-lg p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                  onClick={() => handleRemoveAdmin(a.email)}
+                  disabled={removingAdmin === a.email}
+                  aria-label={`Remove admin access for ${a.email}`}
+                  className="rounded-lg p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-wait disabled:opacity-50"
                   >
                     <Trash2 size={14} />
                   </button>

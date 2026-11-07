@@ -1,9 +1,9 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Copy, Download, Plus, Pencil, Trash2, Upload, Video, Image as ImageIcon } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 import Button from '../../components/common/Button';
 import ImageUpload from '../../components/admin/ImageUpload';
-import { readVideoFile } from '../../utils/imageUpload';
+import { uploadMediaFile, validateVideoDuration } from '../../utils/media';
 import { downloadCsv, parseCsv } from '../../utils/csv';
 import {
   Modal,
@@ -35,6 +35,7 @@ const gradients = [
   { label: 'Warm Ember', value: 'from-[#7C2D12] to-[#F59E0B]' },
 ];
 const bannerCsvHeaders = ['id', 'badge', 'title', 'subtitle', 'cta', 'link', 'image', 'video', 'mediaType', 'mediaFit', 'gradient'];
+const BANNER_FORM_DRAFT_KEY = 'suvarna_admin_banner_form_draft';
 
 const parseBannerCsv = (text) => {
   const rows = parseCsv(text);
@@ -81,7 +82,7 @@ const parseBannerCsv = (text) => {
 };
 
 export default function AdminBanners() {
-  const { banners, addBanner, updateBanner, deleteBanner } = useAdmin();
+  const { banners, saveBannerBatch, updateBanner, deleteBanner, setAdminFormDirty } = useAdmin();
   const [editing, setEditing] = useState(null);
   const [isCloning, setIsCloning] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -90,13 +91,50 @@ export default function AdminBanners() {
   const [importError, setImportError] = useState('');
   const [importStatus, setImportStatus] = useState('');
   const [importing, setImporting] = useState(false);
+  const [savingBanner, setSavingBanner] = useState(false);
+  const [resetNotice, setResetNotice] = useState('');
   const importInputRef = useRef(null);
+  const restoredDraftRef = useRef(false);
+
+  useEffect(() => () => setAdminFormDirty(false), [setAdminFormDirty]);
+
+  useEffect(() => {
+    if (restoredDraftRef.current) return;
+    restoredDraftRef.current = true;
+    try {
+      const draft = JSON.parse(localStorage.getItem(BANNER_FORM_DRAFT_KEY) || 'null');
+      if (!draft?.form || typeof draft.form !== 'object') return;
+      const existing = banners.find((banner) => String(banner.id) === String(draft.editingId));
+      setEditing(draft.mode === 'edit' ? existing || null : null);
+      setIsCloning(draft.mode === 'clone');
+      setForm({ ...emptyForm, ...draft.form });
+      setModalOpen(true);
+      setImportError('Recovered an unsaved banner form from this browser.');
+      setAdminFormDirty(true);
+    } catch (error) {
+      console.error('Could not restore the saved banner form.', error);
+    }
+  }, [banners, setAdminFormDirty]);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    try {
+      localStorage.setItem(BANNER_FORM_DRAFT_KEY, JSON.stringify({
+        form,
+        editingId: editing?.id ?? null,
+        mode: editing ? 'edit' : isCloning ? 'clone' : 'add',
+      }));
+    } catch (error) {
+      console.error('Could not preserve the banner form draft.', error);
+    }
+  }, [editing, form, isCloning, modalOpen]);
 
   const openAdd = () => {
     setEditing(null);
     setIsCloning(false);
     setForm(emptyForm);
     setVideoError('');
+    setAdminFormDirty(true);
     setModalOpen(true);
   };
   const openEdit = (b) => {
@@ -114,6 +152,7 @@ export default function AdminBanners() {
       mediaFit: b.mediaFit || 'contain',
     });
     setVideoError('');
+    setAdminFormDirty(true);
     setModalOpen(true);
   };
   const openClone = (banner) => {
@@ -132,7 +171,18 @@ export default function AdminBanners() {
       gradient: banner.gradient || gradients[0].value,
     });
     setVideoError('');
+    setAdminFormDirty(true);
     setModalOpen(true);
+  };
+  const closeModal = (saved = false) => {
+    if (!saved && !window.confirm('Discard this banner form?')) return;
+    setModalOpen(false);
+    setAdminFormDirty(false);
+    try {
+      localStorage.removeItem(BANNER_FORM_DRAFT_KEY);
+    } catch (error) {
+      console.error('Could not clear the banner form draft.', error);
+    }
   };
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -142,8 +192,9 @@ export default function AdminBanners() {
 
     try {
       if (!file.type.startsWith('video/')) throw new Error('Only video files are allowed');
-      const dataUrl = await readVideoFile(file, 4, 10);
-      setForm((f) => ({ ...f, video: dataUrl, image: '' }));
+      await validateVideoDuration(file, 10);
+      const videoUrl = await uploadMediaFile(file);
+      setForm((f) => ({ ...f, video: videoUrl, image: '' }));
       setVideoError('');
     } catch (error) {
       setVideoError(error.message || 'Please choose a valid MP4 or WebM video that is at least 10 seconds long and under 4MB.');
@@ -152,7 +203,7 @@ export default function AdminBanners() {
     e.target.value = '';
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const payload = {
       ...form,
@@ -166,9 +217,17 @@ export default function AdminBanners() {
       payload.image = '';
     }
 
-    if (editing) updateBanner(editing.id, payload);
-    else addBanner(payload);
-    setModalOpen(false);
+    setSavingBanner(true);
+    try {
+      const saved = await saveBannerBatch([{ ...(editing ? { id: editing.id } : {}), banner: payload }]);
+      if (!saved) {
+        setImportError('Banner was not saved to the database. Your form values are still here; retry after resolving the shared-store error.');
+        return;
+      }
+      closeModal(true);
+    } finally {
+      setSavingBanner(false);
+    }
   };
 
   const exportBanners = () => {
@@ -206,14 +265,16 @@ export default function AdminBanners() {
       });
       let updated = 0;
       let added = 0;
-      plans.forEach(({ existing, banner }) => {
-        if (existing) {
-          updateBanner(existing.id, banner);
-          updated += 1;
-        } else {
-          addBanner(banner);
-          added += 1;
-        }
+      const operations = plans.map(({ existing, banner }) => ({
+        ...(existing ? { id: existing.id } : {}),
+        banner,
+      }));
+      if (!await saveBannerBatch(operations)) {
+        throw new Error('Banners were not saved to the database. Resolve the shared-store error and retry the import.');
+      }
+      plans.forEach(({ existing }) => {
+        if (existing) updated += 1;
+        else added += 1;
       });
       setImportStatus(`Imported ${imported.length} banner${imported.length === 1 ? '' : 's'}: ${added} added, ${updated} updated.`);
     } catch (error) {
@@ -226,10 +287,10 @@ export default function AdminBanners() {
   const resetBannerCache = () => {
     try {
       localStorage.removeItem('suvarna_hero_banner_index');
+      setResetNotice('Banner rotation cache cleared. Your current admin session was not reloaded.');
     } catch {
-      // storage unavailable
+      setResetNotice('Browser storage is unavailable; the banner cache could not be cleared.');
     }
-    window.location.reload();
   };
 
   return (
@@ -258,6 +319,7 @@ export default function AdminBanners() {
       />
 
       <p className="mb-4 text-xs text-slate-500">Banner imports merge matching IDs and add rows with new or blank IDs. Exports include image/video media and all banner fields; large embedded media may produce large CSV files.</p>
+      {resetNotice && <p role="status" className="mb-4 rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-700">{resetNotice}</p>}
       {importError && <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{importError}</p>}
       {importStatus && <p role="status" className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{importStatus}</p>}
 
@@ -323,7 +385,7 @@ export default function AdminBanners() {
       </div>
 
       {modalOpen && (
-        <Modal title={editing ? 'Edit Slide' : isCloning ? 'Clone Slide' : 'Add Slide'} onClose={() => setModalOpen(false)}>
+        <Modal title={editing ? 'Edit Slide' : isCloning ? 'Clone Slide' : 'Add Slide'} onClose={() => closeModal()}>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <Field label="Badge">
@@ -444,10 +506,10 @@ export default function AdminBanners() {
               </Field>
             )}
             <div className="flex gap-3 pt-1">
-              <Button type="submit" variant="primary" className="flex-1">
-                {editing ? 'Save Changes' : 'Add Slide'}
+              <Button type="submit" variant="primary" className="flex-1" disabled={savingBanner}>
+                {savingBanner ? 'Saving…' : editing ? 'Save Changes' : 'Add Slide'}
               </Button>
-              <Button type="button" variant="ghost" onClick={() => setModalOpen(false)}>
+              <Button type="button" variant="ghost" onClick={() => closeModal()} disabled={savingBanner}>
                 Cancel
               </Button>
             </div>
