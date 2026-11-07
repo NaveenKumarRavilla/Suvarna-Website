@@ -4,6 +4,7 @@ import {
   Heart,
   MessageCircle,
   Minus,
+  Pencil,
   Plus,
   ShieldCheck,
   ShoppingCart,
@@ -15,9 +16,11 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import useCart from '../../hooks/useCart';
+import { useAdmin } from '../../context/AdminContext';
 import { useAuth } from '../../context/AuthContext';
 import { useWishlist } from '../../context/WishlistContext';
 import { apiRequest } from '../../utils/api';
+import Button from '../common/Button';
 import ProductGrid from './ProductGrid';
 import SectionHeader from '../common/SectionHeader';
 import {
@@ -48,6 +51,7 @@ function Stars({ value, size = 16 }) {
 
 export default function ProductDetails({ product, related }) {
   const { addItem } = useCart();
+  const { isAdmin, hasPermission } = useAdmin();
   const { user } = useAuth();
   const { toggleItem, isWishlisted } = useWishlist();
   const navigate = useNavigate();
@@ -63,6 +67,7 @@ export default function ProductDetails({ product, related }) {
   const [reviewMessage, setReviewMessage] = useState('');
   const [reviewLoading, setReviewLoading] = useState(false);
   const wishlisted = isWishlisted(product.id);
+  const canEditProduct = isAdmin && hasPermission('products');
   const reviewAverage = reviews.length
     ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length
     : 0;
@@ -212,18 +217,31 @@ export default function ProductDetails({ product, related }) {
             <span className="rounded bg-secondary/10 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-secondary">
               {product.brand}
             </span>
-            <button
-              type="button"
-              onClick={() => toggleItem(product)}
-              aria-pressed={wishlisted}
-              aria-label={wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-white shadow transition hover:scale-110"
-            >
-              <Heart
-                size={18}
-                className={wishlisted ? 'fill-red-500 text-red-500' : 'text-slate-500'}
-              />
-            </button>
+            <div className="flex items-center gap-2">
+              {canEditProduct && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => navigate('/admin/products', { state: { editProductId: product.id } })}
+                >
+                  <Pencil size={14} />
+                  Edit Product
+                </Button>
+              )}
+              <button
+                type="button"
+                onClick={() => toggleItem(product)}
+                aria-pressed={wishlisted}
+                aria-label={wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-white shadow transition hover:scale-110"
+              >
+                <Heart
+                  size={18}
+                  className={wishlisted ? 'fill-red-500 text-red-500' : 'text-slate-500'}
+                />
+              </button>
+            </div>
           </div>
 
           <h1 className="mt-3 text-2xl font-extrabold text-primary sm:text-3xl">

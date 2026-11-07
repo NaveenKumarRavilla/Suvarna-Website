@@ -17,10 +17,9 @@ import { useAdmin } from '../context/AdminContext';
 import { formatPrice } from '../utils/helpers';
 import { StatusBadge } from '../components/admin/AdminForm';
 import { apiRequest } from '../utils/api';
-import { gridCategories } from '../data/categories';
 
 export default function AdminDashboard() {
-  const { products, banners, promoCards, videos, orders, enquiries, offers, policies } = useAdmin();
+  const { products, categories, banners, promoCards, videos, orders, enquiries, offers, policies } = useAdmin();
   const [customerCount, setCustomerCount] = useState(null);
   const [customerCountError, setCustomerCountError] = useState('');
 
@@ -61,7 +60,7 @@ export default function AdminDashboard() {
     { label: 'Enquiries', value: enquiries.filter((e) => e.status === 'New').length, icon: MessageSquare, to: '/admin/enquiries', color: 'bg-cyan-100 text-cyan-600' },
     { label: 'Active Offers', value: offers.filter((o) => o.active).length, icon: BadgePercent, to: '/admin/offers', color: 'bg-orange-100 text-orange-600' },
     { label: 'Policies', value: Object.keys(policies).length, icon: FileText, to: '/admin/policies', color: 'bg-fuchsia-100 text-fuchsia-600' },
-    { label: 'Categories', value: gridCategories.length, icon: FolderTree, to: '/admin/categories', color: 'bg-slate-200 text-slate-600' },
+    { label: 'Categories', value: categories.length, icon: FolderTree, to: '/admin/categories', color: 'bg-slate-200 text-slate-600' },
   ];
 
   return (

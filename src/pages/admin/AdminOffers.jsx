@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Plus, Trash2, BadgePercent } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
-import { gridCategories } from '../../data/categories';
 import Button from '../../components/common/Button';
 import {
   Modal,
@@ -14,7 +13,7 @@ import {
 const emptyForm = { title: '', description: '', discount: '', category: 'laptops' };
 
 export default function AdminOffers() {
-  const { offers, addOffer, updateOffer, deleteOffer } = useAdmin();
+  const { offers, categories, addOffer, updateOffer, deleteOffer } = useAdmin();
   const [form, setForm] = useState(emptyForm);
   const [modalOpen, setModalOpen] = useState(false);
 
@@ -99,7 +98,7 @@ export default function AdminOffers() {
               </Field>
               <Field label="Category">
                 <select value={form.category} onChange={set('category')} className={inputCls}>
-                  {gridCategories.map((c) => (
+                  {categories.map((c) => (
                     <option key={c.id} value={c.id}>{c.label}</option>
                   ))}
                   <option value="all">All Categories</option>

@@ -102,7 +102,7 @@ function Sidebar({ onNavigate }) {
 }
 
 export default function AdminLayout() {
-  const { isAdmin, currentUser, sharedStoreError } = useAdmin();
+  const { isAdmin, currentUser, sharedStoreReady, sharedStoreSaving, sharedStoreError, sharedStoreConflict } = useAdmin();
   const [mobileOpen, setMobileOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -154,10 +154,23 @@ export default function AdminLayout() {
           </button>
           {sharedStoreError && (
             <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
-              Shared store sync failed: {sharedStoreError}
+              {sharedStoreConflict
+                ? `Save conflict: ${sharedStoreError} Your unsaved edits are still in this tab; do not refresh or close it until they are recovered.`
+                : `Shared store sync failed: ${sharedStoreError}`}
             </p>
           )}
-          <Outlet />
+          {sharedStoreSaving && (
+            <p role="status" className="mb-4 rounded-lg bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700">
+              Saving changes to the shared store…
+            </p>
+          )}
+          {sharedStoreReady ? (
+            <Outlet />
+          ) : (
+            <p role="status" className="rounded-lg bg-white px-4 py-6 text-sm font-medium text-slate-600 shadow-card">
+              Loading shared store data. Admin editing will be available when it has finished loading.
+            </p>
+          )}
         </div>
       </div>
     </div>

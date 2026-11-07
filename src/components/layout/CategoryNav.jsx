@@ -1,20 +1,15 @@
 import { Link, useLocation } from 'react-router-dom';
-import { navCategories, normalizeCategoryId } from '../../data/categories';
+import { getVisibleNavigationCategories, navIconFiles, normalizeCategoryId } from '../../data/categories';
 import { useAdmin } from '../../context/AdminContext';
 import { categoryLink } from './MobileHeader';
 
 export default function CategoryNav() {
   const location = useLocation();
-  const { storefrontProducts: products } = useAdmin();
+  const { categories } = useAdmin();
   const params = new URLSearchParams(location.search);
   const activeCategory = normalizeCategoryId(params.get('category'));
   const offersActive = params.get('offers') === 'true';
-  const visibleCategories = navCategories.filter((category) =>
-    category.path ||
-    category.special ||
-    ['home', 'contact'].includes(category.id) ||
-    products.some((product) => normalizeCategoryId(product.category) === category.id)
-  );
+  const visibleCategories = getVisibleNavigationCategories(categories);
 
   const isActive = (cat) => {
     if (cat.id === 'home') return location.pathname === '/';
@@ -45,7 +40,16 @@ export default function CategoryNav() {
                     : 'border-transparent text-slate-600 hover:bg-slate-50 hover:text-secondary'
               }`}
             >
-              <Icon size={20} strokeWidth={active ? 2.4 : 1.8} />
+              {navIconFiles[cat.id] ? (
+                <img
+                  src={`/nav-icons/${navIconFiles[cat.id]}`}
+                  alt=""
+                  aria-hidden="true"
+                  className="h-8 w-8 object-contain"
+                />
+              ) : (
+                <Icon size={20} strokeWidth={active ? 2.4 : 1.8} />
+              )}
               <span className="whitespace-nowrap">{cat.label}</span>
             </Link>
           );

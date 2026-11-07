@@ -1,13 +1,13 @@
 import { Link } from 'react-router-dom';
-import { gridCategories, normalizeCategoryId } from '../../data/categories';
+import { categoryIconMap, normalizeCategoryId } from '../../data/categories';
 import { useAdmin } from '../../context/AdminContext';
 import SectionHeader from '../common/SectionHeader';
 import Button from '../common/Button';
 import BrandMarquee from './BrandMarquee';
 
 export default function CategoryGrid() {
-  const { storefrontProducts: products } = useAdmin();
-  const availableCategories = gridCategories.filter((category) =>
+  const { storefrontProducts: products, categories } = useAdmin();
+  const availableCategories = categories.filter((category) =>
     products.some((product) => normalizeCategoryId(product.category) === category.id)
   );
 
@@ -22,7 +22,7 @@ export default function CategoryGrid() {
         className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-5 md:grid-cols-4 xl:grid-cols-8"
       >
         {availableCategories.map((cat) => {
-          const Icon = cat.icon;
+          const Icon = categoryIconMap[cat.iconKey] || categoryIconMap.Package;
           return (
             <Link
               key={cat.id}

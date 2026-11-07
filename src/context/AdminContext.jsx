@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { products as seedProducts } from '../data/products';
 import { heroSlides as seedBanners, promoCards as seedPromoCards } from '../data/banners';
+import { defaultManagedCategories, normalizeCategoryId } from '../data/categories';
 import { defaultPolicies } from '../data/policies';
 import { addSiteNotification } from '../utils/siteNotifications';
 import { apiRequest } from '../utils/api';
@@ -9,7 +10,7 @@ import { isPublishableProduct } from '../utils/productQuality';
 const AdminContext = createContext(null);
 const STORAGE_KEY = 'suvarna_admin_store';
 const SESSION_KEY = 'suvarna_admin_user';
-const SHARED_DATA_KEYS = ['products', 'banners', 'promoCards', 'offers', 'videos', 'orders', 'enquiries', 'settings', 'policies'];
+const SHARED_DATA_KEYS = ['products', 'banners', 'promoCards', 'offers', 'videos', 'orders', 'enquiries', 'categories', 'settings', 'policies'];
 
 export const MASTER_ADMIN = 'enterprisessuvarnait@gmail.com';
 const LEGACY_MASTER_ADMIN = 'ravillanaveen1996@gmail.com';
@@ -95,6 +96,24 @@ const defaultSettings = {
   announcement: '',
 };
 
+const buildManagedCategories = (products = []) => {
+  const knownIds = new Set(defaultManagedCategories.map((category) => category.id));
+  const productCategoryIds = [
+    ...new Set(products.map((product) => normalizeCategoryId(product.category)).filter(Boolean)),
+  ].filter((id) => !knownIds.has(id));
+
+  return [
+    ...defaultManagedCategories,
+    ...productCategoryIds.map((id) => ({
+      id,
+      label: id.replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()),
+      tagline: '',
+      gradient: 'from-slate-600 to-slate-800',
+      iconKey: 'Package',
+    })),
+  ];
+};
+
 const seedStore = () => ({
   admins: [{
     email: MASTER_ADMIN,
@@ -107,6 +126,7 @@ const seedStore = () => ({
     status: 'Active',
   }],
   products: seedProducts,
+  categories: buildManagedCategories(seedProducts),
   banners: seedBanners,
   promoCards: seedPromoCards,
   offers: seedOffers,
@@ -137,6 +157,9 @@ const loadStore = () => {
       ...base,
       admins,
       products: Array.isArray(base.products) ? base.products : seedStore().products,
+      categories: Array.isArray(base.categories)
+        ? base.categories
+        : seedStore().categories,
       banners: dedupeBanners(Array.isArray(base.banners) ? base.banners : seedStore().banners),
       promoCards: Array.isArray(base.promoCards) ? base.promoCards : seedPromoCards,
       offers: Array.isArray(base.offers) ? base.offers : seedStore().offers,
@@ -177,12 +200,24 @@ const syncCustomerOrderCounts = (customers = [], orders = []) =>
 const getSharedData = (store) =>
   Object.fromEntries(SHARED_DATA_KEYS.map((key) => [key, store[key]]));
 
+const serializeSharedData = (data) =>
+  JSON.stringify(Object.fromEntries(SHARED_DATA_KEYS.map((key) => [key, data[key]])));
+
 const mergeSharedData = (store, data) => {
   const shared = Object.fromEntries(
     SHARED_DATA_KEYS
       .filter((key) => data && Object.prototype.hasOwnProperty.call(data, key))
       .map((key) => [key, data[key]])
   );
+  if (Array.isArray(shared.categories) && shared.categories.length === 0) {
+    const products = shared.products || store.products;
+    if (products.some((product) => normalizeCategoryId(product.category))) {
+      const categoriesById = new Map(
+        [...buildManagedCategories(products), ...store.categories].map((category) => [category.id, category])
+      );
+      shared.categories = [...categoriesById.values()];
+    }
+  }
   const sharedSettings = shared.settings;
   if (sharedSettings) {
     const phoneDigits = String(sharedSettings.phone || '').replace(/\D/g, '');
@@ -218,8 +253,16 @@ export function AdminProvider({ children }) {
   const storeRef = useRef(store);
   storeRef.current = store;
   const [sharedStoreReady, setSharedStoreReady] = useState(false);
+  const [sharedStoreSaving, setSharedStoreSaving] = useState(false);
   const [sharedStoreError, setSharedStoreError] = useState('');
+  const [sharedStoreConflict, setSharedStoreConflict] = useState(false);
   const lastSharedDataRef = useRef('');
+  const lastSharedRevisionRef = useRef(0);
+  const sharedStoreConflictRef = useRef(false);
+  const pendingSharedDataRef = useRef(null);
+  const savingSharedDataRef = useRef(false);
+  const savePromiseRef = useRef(Promise.resolve());
+  const saveRetryTimeoutRef = useRef(null);
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const savedUser = sessionStorage.getItem(SESSION_KEY);
@@ -228,6 +271,68 @@ export function AdminProvider({ children }) {
       return null;
     }
   });
+  const currentUserRef = useRef(currentUser);
+  currentUserRef.current = currentUser;
+  const sharedStoreReadyRef = useRef(sharedStoreReady);
+  sharedStoreReadyRef.current = sharedStoreReady;
+
+  const flushSharedStore = (snapshot = getSharedData(storeRef.current)) => {
+    pendingSharedDataRef.current = snapshot;
+    if (sharedStoreConflictRef.current) {
+      return Promise.reject(new Error('Reload the admin page to load the latest shared data before saving.'));
+    }
+    if (savingSharedDataRef.current) return savePromiseRef.current;
+    if (serializeSharedData(snapshot) === lastSharedDataRef.current) {
+      pendingSharedDataRef.current = null;
+      return Promise.resolve();
+    }
+
+    savingSharedDataRef.current = true;
+    setSharedStoreSaving(true);
+    const savePromise = (async () => {
+      try {
+        while (pendingSharedDataRef.current) {
+          const next = pendingSharedDataRef.current;
+          pendingSharedDataRef.current = null;
+          const body = { data: next, revision: lastSharedRevisionRef.current };
+          const keepalive = new Blob([JSON.stringify(body)]).size < 60 * 1024;
+          const result = await apiRequest('admin-data', { method: 'PUT', body, keepalive });
+          lastSharedRevisionRef.current = Number(result.revision) || lastSharedRevisionRef.current + 1;
+          lastSharedDataRef.current = serializeSharedData(next);
+        }
+        setSharedStoreError('');
+        setSharedStoreConflict(false);
+        sharedStoreConflictRef.current = false;
+        window.clearTimeout(saveRetryTimeoutRef.current);
+        saveRetryTimeoutRef.current = null;
+      } catch (error) {
+        pendingSharedDataRef.current = getSharedData(storeRef.current);
+        if (error.status === 409 || error.status === 428) {
+          sharedStoreConflictRef.current = true;
+          setSharedStoreConflict(true);
+        } else {
+          setSharedStoreConflict(false);
+        }
+        setSharedStoreError(error.message);
+        console.error('Could not save shared admin data.', error);
+        const shouldRetry = !error.status || error.status >= 500;
+        if (shouldRetry && !saveRetryTimeoutRef.current && currentUserRef.current && sharedStoreReadyRef.current) {
+          saveRetryTimeoutRef.current = window.setTimeout(() => {
+            saveRetryTimeoutRef.current = null;
+            if (currentUserRef.current && sharedStoreReadyRef.current) {
+              flushSharedStore().catch(() => {});
+            }
+          }, 10_000);
+        }
+        throw error;
+      } finally {
+        savingSharedDataRef.current = false;
+        setSharedStoreSaving(false);
+      }
+    })();
+    savePromiseRef.current = savePromise;
+    return savePromise;
+  };
 
   const login = async (email, password) => {
     const clean = email.trim().toLowerCase();
@@ -239,6 +344,9 @@ export function AdminProvider({ children }) {
     } catch (error) {
       return { ok: false, error: error.message };
     }
+    sharedStoreConflictRef.current = false;
+    setSharedStoreConflict(false);
+    setSharedStoreReady(false);
     setCurrentUser(clean);
     try {
       sessionStorage.setItem(SESSION_KEY, clean);
@@ -254,6 +362,9 @@ export function AdminProvider({ children }) {
         method: 'POST',
         body: { email: email.trim().toLowerCase(), password, setupKey },
       });
+      sharedStoreConflictRef.current = false;
+      setSharedStoreConflict(false);
+      setSharedStoreReady(false);
       setCurrentUser(result.email);
       try {
         sessionStorage.setItem(SESSION_KEY, result.email);
@@ -266,15 +377,29 @@ export function AdminProvider({ children }) {
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    if (currentUser && !sharedStoreReady) {
+      setSharedStoreError('Wait for the shared store to finish loading before logging out.');
+      return;
+    }
+    if (currentUser && !sharedStoreConflictRef.current) {
+      try {
+        await flushSharedStore(getSharedData(storeRef.current));
+      } catch {
+        return;
+      }
+    }
+    setSharedStoreReady(false);
     setCurrentUser(null);
-    apiRequest('admin-logout', { method: 'POST' }).catch((error) => {
-      console.error('Could not close the admin server session.', error);
-    });
     try {
       sessionStorage.removeItem(SESSION_KEY);
     } catch {
       /* storage unavailable */
+    }
+    try {
+      await apiRequest('admin-logout', { method: 'POST' });
+    } catch (error) {
+      console.error('Could not close the admin server session.', error);
     }
   };
 
@@ -289,15 +414,22 @@ export function AdminProvider({ children }) {
         if (normalizeEmail(email) !== normalizeEmail(currentUser)) {
           throw Object.assign(new Error('The active server admin does not match this browser session.'), { status: 401 });
         }
-        const { data } = await apiRequest('admin-data');
+        const { data, revision = 0 } = await apiRequest('admin-data');
         if (!active) return;
+        lastSharedRevisionRef.current = Number(revision) || 0;
+        sharedStoreConflictRef.current = false;
+        setSharedStoreConflict(false);
         if (data) {
-          lastSharedDataRef.current = JSON.stringify(data);
+          lastSharedDataRef.current = serializeSharedData(data);
           setStore((current) => mergeSharedData(current, data));
         } else {
           const initialData = getSharedData(storeRef.current);
-          await apiRequest('admin-data', { method: 'PUT', body: { data: initialData } });
-          lastSharedDataRef.current = JSON.stringify(initialData);
+          const result = await apiRequest('admin-data', {
+            method: 'PUT',
+            body: { data: initialData, revision: lastSharedRevisionRef.current },
+          });
+          lastSharedRevisionRef.current = Number(result.revision) || 1;
+          lastSharedDataRef.current = serializeSharedData(initialData);
         }
         setSharedStoreError('');
         setSharedStoreReady(true);
@@ -346,19 +478,10 @@ export function AdminProvider({ children }) {
 
   useEffect(() => {
     if (!currentUser || !sharedStoreReady) return undefined;
-    const serialized = JSON.stringify(getSharedData(store));
+    const serialized = serializeSharedData(getSharedData(store));
     if (serialized === lastSharedDataRef.current) return undefined;
-    const timeoutId = window.setTimeout(async () => {
-      try {
-        await apiRequest('admin-data', { method: 'PUT', body: { data: getSharedData(storeRef.current) } });
-        lastSharedDataRef.current = JSON.stringify(getSharedData(storeRef.current));
-        setSharedStoreError('');
-      } catch (error) {
-        setSharedStoreError(error.message);
-        console.error('Could not save shared admin data.', error);
-      }
-    }, 500);
-    return () => window.clearTimeout(timeoutId);
+    flushSharedStore(getSharedData(store)).catch(() => {});
+    return undefined;
   }, [store, currentUser, sharedStoreReady]);
 
   useEffect(() => {
@@ -366,12 +489,21 @@ export function AdminProvider({ children }) {
     let active = true;
     const refreshAdminData = async () => {
       try {
-        const { data } = await apiRequest('admin-data');
+        const { data, revision = 0 } = await apiRequest('admin-data');
         if (!active || !data) return;
-        setSharedStoreError('');
-        const remoteSerialized = JSON.stringify(data);
-        const localSerialized = JSON.stringify(getSharedData(storeRef.current));
-        if (remoteSerialized !== localSerialized && localSerialized === lastSharedDataRef.current) {
+        if (!sharedStoreConflictRef.current) setSharedStoreError('');
+        const remoteSerialized = serializeSharedData(data);
+        const localSerialized = serializeSharedData(getSharedData(storeRef.current));
+        if (remoteSerialized === localSerialized) {
+          lastSharedRevisionRef.current = Number(revision) || lastSharedRevisionRef.current;
+          lastSharedDataRef.current = remoteSerialized;
+          if (sharedStoreConflictRef.current) {
+            sharedStoreConflictRef.current = false;
+            setSharedStoreConflict(false);
+            setSharedStoreError('');
+          }
+        } else if (localSerialized === lastSharedDataRef.current) {
+          lastSharedRevisionRef.current = Number(revision) || lastSharedRevisionRef.current;
           lastSharedDataRef.current = remoteSerialized;
           setStore((current) => mergeSharedData(current, data));
         }
@@ -425,7 +557,10 @@ export function AdminProvider({ children }) {
 
     return {
       currentUser,
+      sharedStoreReady,
+      sharedStoreSaving,
       sharedStoreError,
+      sharedStoreConflict,
       isAdmin,
       isMaster,
       currentAdmin,
@@ -517,6 +652,28 @@ export function AdminProvider({ children }) {
 
       /* Generic collection CRUD helpers */
       products: store.products,
+      categories: store.categories,
+      addCategory: (item) =>
+        setStore((s) => {
+          const id = normalizeCategoryId(item.id);
+          if (!id || s.categories.some((category) => category.id === id)) return s;
+          return { ...s, categories: [...s.categories, { ...item, id }] };
+        }),
+      updateCategory: (id, patch) =>
+        setStore((s) => ({
+          ...s,
+          categories: s.categories.map((category) =>
+            category.id === id ? { ...category, ...patch, id: category.id } : category
+          ),
+        })),
+      deleteCategory: (id) => {
+        if (storeRef.current.products.some((product) => normalizeCategoryId(product.category) === id)) return false;
+        setStore((s) => ({
+          ...s,
+          categories: s.categories.filter((category) => category.id !== id),
+        }));
+        return true;
+      },
       storefrontProducts: store.products.filter(isPublishableProduct),
       addProduct: (item) =>
         setStore((s) => ({
@@ -776,7 +933,7 @@ export function AdminProvider({ children }) {
           return { ...s, policies };
         }),
     };
-  }, [store, currentUser, sharedStoreError]);
+  }, [store, currentUser, sharedStoreReady, sharedStoreSaving, sharedStoreError]);
 
   return <AdminContext.Provider value={value}>{children}</AdminContext.Provider>;
 }

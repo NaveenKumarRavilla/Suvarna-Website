@@ -1,9 +1,11 @@
-import { useState } from 'react';
-import { Minus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Copy, Download, Minus, Pencil, Plus, Search, Trash2, Upload, X } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
-import { gridCategories, normalizeCategoryId } from '../../data/categories';
+import { normalizeCategoryId } from '../../data/categories';
 import { formatPrice } from '../../utils/helpers';
 import { isPublishableProduct } from '../../utils/productQuality';
+import { downloadCsv, parseCsv } from '../../utils/csv';
 import Button from '../../components/common/Button';
 import ImageUpload from '../../components/admin/ImageUpload';
 import { Field, PageHeader, inputCls, tableWrap, tableCls, thCls, tdCls } from '../../components/admin/AdminForm';
@@ -22,6 +24,100 @@ const emptyForm = () => ({
 const stockOptions = ['In Stock', 'Limited Stock', 'Out of Stock'];
 const inlineInputCls = 'w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 outline-none transition focus:border-secondary focus:ring-2 focus:ring-secondary/20';
 const toSpecKey = (key) => key.trim().toLowerCase().replace(/[^a-z0-9]+(.)?/g, (_, char) => char ? char.toUpperCase() : '');
+const productCsvHeaders = ['id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'featured', 'description', 'warranty', 'image', 'images', 'specs', 'rating', 'reviews'];
+
+const parseJsonCell = (value, label, rowNumber, fallback) => {
+  if (!value.trim()) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error(`Row ${rowNumber}: ${label} must contain valid JSON.`);
+  }
+};
+
+const parseProductCsv = (text) => {
+  const rows = parseCsv(text);
+  if (rows.length < 2) throw new Error('The CSV file must include a header row and at least one product.');
+  const aliases = {
+    id: 'id', productid: 'id', name: 'name', productname: 'name', brand: 'brand', productbrand: 'brand',
+    category: 'category', productcategory: 'category', price: 'price', productprice: 'price',
+    oldprice: 'oldPrice', stock: 'stock', featured: 'featured', description: 'description',
+    warranty: 'warranty', image: 'image', images: 'images', specs: 'specs', rating: 'rating', reviews: 'reviews',
+  };
+  const headers = rows[0].map((header) => {
+    const normalized = header.trim().toLowerCase().replace(/[\s_-]+/g, '');
+    return aliases[normalized] || header.trim();
+  });
+  if (new Set(headers).size !== headers.length) throw new Error('The CSV file contains duplicate column names.');
+  const required = ['name', 'brand', 'category', 'price'];
+  const missing = required.filter((header) => !headers.includes(header));
+  if (missing.length) throw new Error(`The CSV file is missing required columns: ${missing.join(', ')}.`);
+
+  const seenIds = new Set();
+  return rows.slice(1).map((cells, rowIndex) => {
+    const rowNumber = rowIndex + 2;
+    const record = Object.fromEntries(headers.map((header, index) => [header, cells[index] || '']));
+    const id = (record.id || '').trim();
+    if (id && seenIds.has(id)) throw new Error(`Row ${rowNumber}: product ID "${id}" appears more than once in the CSV.`);
+    if (id) seenIds.add(id);
+
+    const name = record.name.trim();
+    const brand = record.brand.trim();
+    const category = record.category.trim();
+    const price = Number(record.price);
+    const oldPriceValue = (record.oldPrice || '').trim();
+    const oldPrice = oldPriceValue ? Number(oldPriceValue) : price;
+    if (!name || !brand || !category) throw new Error(`Row ${rowNumber}: name, brand, and category are required.`);
+    if (!Number.isFinite(price) || price <= 0) throw new Error(`Row ${rowNumber}: price must be a positive number.`);
+    if (!Number.isFinite(oldPrice) || oldPrice <= 0) throw new Error(`Row ${rowNumber}: oldPrice must be a positive number.`);
+
+    const images = Object.hasOwn(record, 'images') ? parseJsonCell(record.images, 'images', rowNumber, []) : undefined;
+    const specs = Object.hasOwn(record, 'specs') ? parseJsonCell(record.specs, 'specs', rowNumber, {}) : undefined;
+    if (!Array.isArray(images) || images.some((image) => typeof image !== 'string')) {
+      if (images !== undefined) throw new Error(`Row ${rowNumber}: images must be a JSON array of strings.`);
+    }
+    if (specs !== undefined && (!specs || typeof specs !== 'object' || Array.isArray(specs))) {
+      throw new Error(`Row ${rowNumber}: specs must be a JSON object.`);
+    }
+
+    const featuredValue = (record.featured || '').trim().toLowerCase();
+    if (featuredValue && !['true', 'false', '1', '0', 'yes', 'no'].includes(featuredValue)) {
+      throw new Error(`Row ${rowNumber}: featured must be true or false.`);
+    }
+    const optionalNumber = (key, fallback) => {
+      if (!record[key] || !record[key].trim()) return fallback;
+      const value = Number(record[key]);
+      if (!Number.isFinite(value) || value < 0) throw new Error(`Row ${rowNumber}: ${key} must be a non-negative number.`);
+      return value;
+    };
+    const product = { name, brand, category, price };
+    if (Object.hasOwn(record, 'oldPrice')) product.oldPrice = oldPrice;
+    if (Object.hasOwn(record, 'stock')) product.stock = (record.stock || '').trim() || 'In Stock';
+    if (Object.hasOwn(record, 'featured')) product.featured = ['true', '1', 'yes'].includes(featuredValue);
+    if (Object.hasOwn(record, 'description')) product.description = record.description;
+    if (Object.hasOwn(record, 'warranty')) product.warranty = record.warranty;
+    if (Object.hasOwn(record, 'image')) product.image = record.image || '';
+    if (images !== undefined) product.images = images;
+    if (!Object.hasOwn(record, 'image') && images !== undefined) product.image = images[0] || '';
+    if (specs !== undefined) product.specs = specs;
+    if (Object.hasOwn(record, 'rating')) product.rating = optionalNumber('rating', 4.5);
+    if (Object.hasOwn(record, 'reviews')) product.reviews = optionalNumber('reviews', 0);
+    for (const [field, value] of Object.entries(record)) {
+      if (['id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'featured', 'description', 'warranty', 'image', 'images', 'specs', 'rating', 'reviews'].includes(field)) continue;
+      const trimmed = value.trim();
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        product[field] = parseJsonCell(value, field, rowNumber, value);
+      } else {
+        product[field] = value;
+      }
+    }
+    return {
+      id,
+      product,
+      fields: new Set(Object.keys(record)),
+    };
+  });
+};
 
 const warrantyFormValues = (warranty = '') => {
   const match = String(warranty).match(/(\d+)\s*(Month|Months|Year|Years)\s*(.*)/i);
@@ -30,19 +126,24 @@ const warrantyFormValues = (warranty = '') => {
 };
 
 export default function AdminProducts() {
-  const { products, addProduct, updateProduct, deleteProduct } = useAdmin();
+  const { products, categories, addProduct, updateProduct, deleteProduct } = useAdmin();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [editing, setEditing] = useState(null);
+  const [formMode, setFormMode] = useState('add');
   const [form, setForm] = useState(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
   const [formError, setFormError] = useState('');
   const [categorySearch, setCategorySearch] = useState('all');
   const [productSearch, setProductSearch] = useState('');
+  const [importError, setImportError] = useState('');
+  const [importStatus, setImportStatus] = useState('');
+  const [importing, setImporting] = useState(false);
+  const importInputRef = useRef(null);
 
   const productCategories = [...new Set(products.map((product) => product.category).filter(Boolean))].sort();
   const categoryOptions = [...new Map([
-    ...gridCategories.map((category) => [normalizeCategoryId(category.id), { id: normalizeCategoryId(category.id), label: category.label }]),
-    ['gaming', { id: 'gaming', label: 'Gaming' }],
-    ['refurbished', { id: 'refurbished', label: 'Refurbished' }],
+    ...categories.map((category) => [normalizeCategoryId(category.id), { id: normalizeCategoryId(category.id), label: category.label }]),
     ...productCategories.map((category) => {
       const id = normalizeCategoryId(category);
       return [id, { id, label: category.replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) }];
@@ -64,20 +165,32 @@ export default function AdminProducts() {
   });
   const hiddenFromStorefrontCount = products.filter((product) => !isPublishableProduct(product)).length;
 
-  const openAdd = () => { setEditing(null); setForm(emptyForm()); setFormError(''); setFormOpen(true); };
-  const openEdit = (product) => {
+  const openAdd = () => { setEditing(null); setFormMode('add'); setForm(emptyForm()); setFormError(''); setFormOpen(true); };
+  const openEdit = (product, clone = false) => {
     const productImages = Array.isArray(product.images) && product.images.length ? product.images : product.image ? [product.image] : [];
     const configuration = Object.entries(product.specs || {}).map(([key, value]) => ({ key, value: String(value || '') }));
-    setEditing(product);
+    setEditing(clone ? null : product);
+    setFormMode(clone ? 'clone' : 'edit');
     setFormError('');
     setForm({
-      name: product.name || '', brand: product.brand || '', category: product.category || 'laptops', price: product.price || '', oldPrice: product.oldPrice || '', stock: product.stock || 'In Stock', images: productImages,
-      configuration: configuration.length ? configuration : blankConfiguration(), featured: !!product.featured, description: product.description || '', ...warrantyFormValues(product.warranty),
+      name: clone ? `Copy of ${product.name || ''}` : product.name || '',
+      brand: product.brand || '', category: product.category || 'laptops', price: product.price || '', oldPrice: product.oldPrice || '', stock: product.stock || 'In Stock', images: productImages,
+      configuration: configuration.length ? configuration : blankConfiguration(), featured: clone ? false : !!product.featured, description: product.description || '', ...warrantyFormValues(product.warranty),
     });
     setFormOpen(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
-  const closeForm = () => { setEditing(null); setFormOpen(false); };
+
+  useEffect(() => {
+    const productId = location.state?.editProductId;
+    if (productId === undefined || productId === null) return;
+    const product = products.find((item) => String(item.id) === String(productId));
+    if (!product) return;
+    openEdit(product);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate, products]);
+
+  const closeForm = () => { setEditing(null); setFormMode('add'); setFormOpen(false); };
   const set = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.type === 'checkbox' ? event.target.checked : event.target.value }));
   const updateConfiguration = (index, field, value) => setForm((current) => ({ ...current, configuration: current.configuration.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item) }));
   const removeConfiguration = (index) => setForm((current) => ({ ...current, configuration: current.configuration.filter((_, itemIndex) => itemIndex !== index) }));
@@ -111,6 +224,51 @@ export default function AdminProducts() {
     closeForm();
   };
 
+  const exportProducts = () => {
+    const headers = [...new Set([...productCsvHeaders, ...products.flatMap((product) => Object.keys(product))])];
+    downloadCsv(
+      'suvarna-products.csv',
+      headers,
+      products.map((product) => headers.map((header) => {
+        const value = product[header];
+        return value && typeof value === 'object' ? JSON.stringify(value) : value ?? '';
+      })),
+    );
+  };
+
+  const importProducts = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setImporting(true);
+    setImportError('');
+    setImportStatus('');
+    try {
+      const imported = parseProductCsv(await file.text());
+      const currentProducts = new Map(products.map((product) => [String(product.id), product]));
+      let updated = 0;
+      let added = 0;
+      imported.forEach(({ id, product, fields }) => {
+        const existing = id ? currentProducts.get(id) : null;
+        if (existing) {
+          const patch = Object.fromEntries(Object.entries(product).filter(([field]) => fields.has(field)));
+          updateProduct(existing.id, patch);
+          updated += 1;
+        } else {
+          const newProduct = { ...product };
+          delete newProduct.id;
+          addProduct(newProduct);
+          added += 1;
+        }
+      });
+      setImportStatus(`Imported ${imported.length} product${imported.length === 1 ? '' : 's'}: ${added} added, ${updated} updated.`);
+    } catch (error) {
+      setImportError(error.message || 'The selected CSV file could not be imported.');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader
@@ -118,6 +276,11 @@ export default function AdminProducts() {
         subtitle={`${displayedProducts.length} of ${products.length} products shown`}
         action={
           <>
+            <Button type="button" variant="secondary" size="md" onClick={exportProducts}><Download size={16} />Export CSV</Button>
+            <Button type="button" variant="secondary" size="md" onClick={() => importInputRef.current?.click()} disabled={importing}>
+              <Upload size={16} />{importing ? 'Importing...' : 'Import CSV'}
+            </Button>
+            <input ref={importInputRef} type="file" accept=".csv,text/csv" onChange={importProducts} className="hidden" aria-label="Import products from CSV" />
             <form onSubmit={(event) => event.preventDefault()} role="search" className="flex w-full min-w-[280px] max-w-xl flex-1 items-stretch overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200 transition focus-within:ring-2 focus-within:ring-secondary">
               <label htmlFor="product-category-search" className="sr-only">Category</label>
               <select id="product-category-search" value={categorySearch} onChange={(event) => setCategorySearch(event.target.value)} className="max-w-[150px] border-r border-slate-200 bg-slate-50 px-3 text-sm text-slate-600 outline-none">
@@ -133,6 +296,10 @@ export default function AdminProducts() {
         }
       />
 
+      <p className="mb-4 text-xs text-slate-500">Import merges rows by product ID; matching IDs update products, and new products receive generated IDs. Export includes all product fields, including image data and specifications. Use the exported CSV as the import template.</p>
+      {importError && <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{importError}</p>}
+      {importStatus && <p role="status" className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{importStatus}</p>}
+
       {hiddenFromStorefrontCount > 0 && (
         <p role="status" className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
           {hiddenFromStorefrontCount} product{hiddenFromStorefrontCount === 1 ? ' is' : 's are'} hidden from customers until complete specifications and a useful description are added. Edit the listed item to publish it.
@@ -142,7 +309,7 @@ export default function AdminProducts() {
       {formOpen && (
         <section className="mb-6 rounded-xl bg-white p-5 shadow-card sm:p-6">
           <div className="mb-5 flex items-center justify-between gap-3">
-            <div><h2 className="text-lg font-extrabold text-primary">{editing ? 'Edit Product' : 'Add Product Details'}</h2><p className="mt-1 text-xs text-slate-500">Changes are saved only when you click {editing ? 'Save Changes' : 'Add Product'}.</p></div>
+            <div><h2 className="text-lg font-extrabold text-primary">{editing ? 'Edit Product' : formMode === 'clone' ? 'Clone Product' : 'Add Product Details'}</h2><p className="mt-1 text-xs text-slate-500">Changes are saved only when you click {editing ? 'Save Changes' : 'Add Product'}.</p></div>
             <button type="button" onClick={closeForm} aria-label="Close product form" className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-primary"><X size={18} /></button>
           </div>
 
@@ -271,7 +438,7 @@ export default function AdminProducts() {
                     {stockOptions.map((status) => <option key={status}>{status}</option>)}
                   </select>
                 </td>
-                <td className={tdCls}><span className="flex gap-1"><button type="button" onClick={() => openEdit(product)} aria-label={`Edit ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary"><Pencil size={15} /></button><button type="button" onClick={() => deleteProduct(product.id)} aria-label={`Delete ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></button></span></td>
+                <td className={tdCls}><span className="flex gap-1"><button type="button" onClick={() => openEdit(product)} aria-label={`Edit ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary"><Pencil size={15} /></button><button type="button" onClick={() => openEdit(product, true)} aria-label={`Clone ${product.name}`} title="Clone product" className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary"><Copy size={15} /></button><button type="button" onClick={() => deleteProduct(product.id)} aria-label={`Delete ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></button></span></td>
               </tr>
             ))}
           </tbody>

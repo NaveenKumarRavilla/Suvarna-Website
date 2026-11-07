@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 ob_start();
 
+const MAX_SHARED_STORE_BYTES = 8_000_000;
+
 $configPath = __DIR__ . '/config.php';
 if (!is_file($configPath)) {
     respond(503, ['error' => 'Hostinger API is not configured. Add public/api/config.php using config.example.php.']);
@@ -157,8 +159,8 @@ try {
             $identifier = cleanText($input['identifier'] ?? '', 160);
             $email = normalizeEmail($identifier);
             $phone = preg_replace('/\D+/', '', $identifier);
-            $statement = $pdo->prepare('SELECT * FROM customers WHERE email = ? OR phone_digits = ? LIMIT 1');
-            $statement->execute([$email, $phone]);
+            $statement = $pdo->prepare("SELECT * FROM customers WHERE email = ? OR (? <> '' AND phone_digits = ?) LIMIT 1");
+            $statement->execute([$email, $phone, $phone]);
             $customer = $statement->fetch();
             if (!$customer || !$customer['password_hash'] || !password_verify((string) ($input['password'] ?? ''), $customer['password_hash'])) {
                 respond(401, ['error' => 'Incorrect email/mobile number or password.']);
@@ -347,7 +349,7 @@ try {
             requireMethod('GET');
             requireAdmin();
             $customers = $pdo->query(
-                'SELECT id, name, email, phone, provider, providers, joined_at
+                'SELECT id, name, email, phone, phone_digits, provider, providers, address, city, pin, joined_at
                  FROM customers ORDER BY joined_at DESC, id DESC'
             )->fetchAll();
             $shared = getSharedStore($pdo);
@@ -363,6 +365,158 @@ try {
                 return publicCustomer($customer);
             }, $customers);
             respond(200, ['customers' => $customers]);
+
+        case 'customers-update-phone':
+            requireMethod('POST');
+            requireAdmin();
+            $input = readJson();
+            $customerId = filter_var($input['id'] ?? null, FILTER_VALIDATE_INT);
+            if (!$customerId || $customerId < 1) respond(422, ['error' => 'A valid customer ID is required.']);
+            $phone = cleanText($input['phone'] ?? '', 40);
+            $phoneDigits = preg_replace('/\D+/', '', $phone);
+            if ($phone !== '' && (strlen($phoneDigits) < 10 || strlen($phoneDigits) > 15)) {
+                respond(422, ['error' => 'Phone number must contain 10 to 15 digits.']);
+            }
+            if ($phoneDigits !== '') {
+                $duplicate = $pdo->prepare('SELECT id FROM customers WHERE phone_digits = ? AND id <> ? LIMIT 1');
+                $duplicate->execute([$phoneDigits, $customerId]);
+                if ($duplicate->fetchColumn()) respond(409, ['error' => 'This mobile number is already linked to another customer account.']);
+            }
+            $update = $pdo->prepare('UPDATE customers SET phone = ?, phone_digits = ? WHERE id = ?');
+            $update->execute([$phone, $phoneDigits, $customerId]);
+            if ($update->rowCount() === 0) {
+                $exists = $pdo->prepare('SELECT 1 FROM customers WHERE id = ?');
+                $exists->execute([$customerId]);
+                if (!$exists->fetchColumn()) respond(404, ['error' => 'Customer account was not found.']);
+            }
+            respond(200, ['ok' => true, 'phone' => $phone]);
+
+        case 'customers-import':
+            requireMethod('POST');
+            requireAdmin();
+            $input = readJson();
+            $records = $input['customers'] ?? null;
+            if (!is_array($records) || count($records) < 1 || count($records) > 500) {
+                respond(422, ['error' => 'Import between 1 and 500 customer profiles at a time.']);
+            }
+            if (array_keys($records) !== range(0, count($records) - 1)) {
+                respond(422, ['error' => 'Customer profiles must be provided as a list.']);
+            }
+            $createOnly = !empty($input['createOnly']);
+
+            $normalizedRecords = [];
+            $seenEmails = [];
+            $seenPhones = [];
+            foreach ($records as $index => $record) {
+                $rowNumber = $index + 2;
+                if (!is_array($record)) respond(422, ['error' => "Row {$rowNumber}: invalid customer data."]);
+                $email = normalizeEmail($record['email'] ?? '');
+                $name = cleanText($record['name'] ?? '', 160);
+                if (!filter_var($email, FILTER_VALIDATE_EMAIL) || $name === '') {
+                    respond(422, ['error' => "Row {$rowNumber}: provide a valid email address and customer name."]);
+                }
+                if (isset($seenEmails[$email])) {
+                    respond(422, ['error' => "Row {$rowNumber}: the email {$email} appears more than once."]);
+                }
+                $seenEmails[$email] = true;
+
+                $profile = [
+                    'email' => $email,
+                    'name' => $name,
+                    'fields' => ['name' => $name],
+                ];
+                foreach (['phone' => 40, 'address' => 500, 'city' => 120, 'pin' => 20] as $field => $limit) {
+                    if (!array_key_exists($field, $record)) continue;
+                    $value = cleanText($record[$field] ?? '', $limit);
+                    $profile['fields'][$field] = $value;
+                    if ($field === 'phone') {
+                        $digits = preg_replace('/\D+/', '', $value);
+                        if ($digits !== '' && (strlen($digits) < 10 || strlen($digits) > 15)) {
+                            respond(422, ['error' => "Row {$rowNumber}: phone number must contain 10 to 15 digits."]);
+                        }
+                        if ($digits !== '') {
+                            if (isset($seenPhones[$digits])) respond(422, ['error' => "Row {$rowNumber}: phone number appears more than once."]);
+                            $seenPhones[$digits] = true;
+                        }
+                        $profile['phone_digits'] = $digits;
+                    }
+                }
+                if (array_key_exists('joined', $record) && trim((string) $record['joined']) !== '') {
+                    $joined = trim((string) $record['joined']);
+                    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $joined)) {
+                        respond(422, ['error' => "Row {$rowNumber}: joined date must use YYYY-MM-DD."]);
+                    }
+                    [$year, $month, $day] = array_map('intval', explode('-', $joined));
+                    if (!checkdate($month, $day, $year)) respond(422, ['error' => "Row {$rowNumber}: joined date is invalid."]);
+                    $profile['joined'] = $joined;
+                }
+                $normalizedRecords[] = $profile;
+            }
+
+            $pdo->beginTransaction();
+            $created = 0;
+            $updated = 0;
+            $emailLookup = $pdo->prepare('SELECT id FROM customers WHERE email = ? LIMIT 1');
+            $phoneLookup = $pdo->prepare('SELECT id FROM customers WHERE phone_digits = ? AND email <> ? LIMIT 1');
+            $updateCustomer = $pdo->prepare('UPDATE customers SET name = ?, phone = ?, phone_digits = ?, address = ?, city = ?, pin = ? WHERE id = ?');
+            $insertCustomer = $pdo->prepare(
+                "INSERT INTO customers (email, name, phone, phone_digits, password_hash, provider, providers, address, city, pin, addresses, joined_at)
+                 VALUES (?, ?, ?, ?, NULL, 'profile', ?, ?, ?, ?, ?, ?)"
+            );
+            foreach ($normalizedRecords as $profile) {
+                $emailLookup->execute([$profile['email']]);
+                $existingId = $emailLookup->fetchColumn();
+                if ($existingId !== false && $createOnly) {
+                    $pdo->rollBack();
+                    respond(409, ['error' => 'A customer account with this email already exists. Import the profile to update it instead.']);
+                }
+                $phoneDigits = $profile['phone_digits'] ?? '';
+                if ($phoneDigits !== '') {
+                    $phoneLookup->execute([$phoneDigits, $profile['email']]);
+                    if ($phoneLookup->fetchColumn()) {
+                        $pdo->rollBack();
+                        respond(409, ['error' => 'A phone number in this import is already linked to another customer account.']);
+                    }
+                }
+
+                if ($existingId !== false) {
+                    $current = $pdo->prepare('SELECT phone, phone_digits, address, city, pin FROM customers WHERE id = ?');
+                    $current->execute([$existingId]);
+                    $existing = $current->fetch() ?: [];
+                    $resolvedPhone = array_key_exists('phone', $profile['fields'])
+                        ? $profile['fields']['phone']
+                        : ($existing['phone'] ?? '');
+                    $resolvedPhoneDigits = array_key_exists('phone', $profile['fields'])
+                        ? $phoneDigits
+                        : ($existing['phone_digits'] ?? '');
+                    $updateCustomer->execute([
+                        $profile['fields']['name'],
+                        $resolvedPhone,
+                        $resolvedPhoneDigits,
+                        $profile['fields']['address'] ?? ($existing['address'] ?? ''),
+                        $profile['fields']['city'] ?? ($existing['city'] ?? ''),
+                        $profile['fields']['pin'] ?? ($existing['pin'] ?? ''),
+                        $existingId,
+                    ]);
+                    $updated += 1;
+                } else {
+                    $insertCustomer->execute([
+                        $profile['email'],
+                        $profile['fields']['name'],
+                        $profile['fields']['phone'] ?? '',
+                        $phoneDigits,
+                        json_encode([]),
+                        $profile['fields']['address'] ?? '',
+                        $profile['fields']['city'] ?? '',
+                        $profile['fields']['pin'] ?? '',
+                        json_encode([]),
+                        $profile['joined'] ?? date('Y-m-d'),
+                    ]);
+                    $created += 1;
+                }
+            }
+            $pdo->commit();
+            respond(200, ['ok' => true, 'created' => $created, 'updated' => $updated]);
 
         case 'customers-count':
             requireMethod('GET');
@@ -390,18 +544,74 @@ try {
             requireMethod('PUT');
             $input = readJson();
             $data = normalizeStoreData($input['data'] ?? null);
+            if (!array_key_exists('revision', $input)) {
+                respond(428, ['error' => 'This admin page is outdated. Refresh it before saving shared data.']);
+            }
+            if (!is_numeric($input['revision']) || (int) $input['revision'] < 0) {
+                respond(422, ['error' => 'The shared store revision is invalid.']);
+            }
+            $expectedRevision = (int) $input['revision'];
             $serialized = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            if ($serialized === false || strlen($serialized) > 4_500_000) {
+            if ($serialized === false || strlen($serialized) > MAX_SHARED_STORE_BYTES) {
                 respond(413, ['error' => 'The shared store data is too large to save.']);
             }
-            $statement = $pdo->prepare(
-                'INSERT INTO shared_store (store_key, store_data, revision, updated_at)
-                 VALUES (?, ?, 1, CURRENT_TIMESTAMP)
-                 ON DUPLICATE KEY UPDATE store_data = VALUES(store_data), revision = revision + 1, updated_at = CURRENT_TIMESTAMP'
-            );
-            $statement->execute(['main', $serialized]);
-            $shared = getSharedStore($pdo);
-            respond(200, ['revision' => (int) $shared['revision']]);
+            $pdo->beginTransaction();
+            try {
+                $statement = $pdo->prepare('SELECT store_data, revision FROM shared_store WHERE store_key = ? FOR UPDATE');
+                $statement->execute(['main']);
+                $existing = $statement->fetch();
+
+                if ($existing) {
+                    $currentRevision = (int) $existing['revision'];
+                    if ($expectedRevision !== $currentRevision) {
+                        $pdo->rollBack();
+                        respond(409, [
+                            'error' => 'The shared store changed in another admin session. Reload the admin page before making more changes.',
+                            'revision' => $currentRevision,
+                        ]);
+                    }
+
+                    $currentData = json_decode($existing['store_data'], true);
+                    if (!is_array($currentData)) {
+                        throw new RuntimeException('Shared store data is not valid JSON.');
+                    }
+                    foreach (['orders', 'enquiries'] as $collection) {
+                        if (is_array($currentData[$collection] ?? null)) {
+                            $data[$collection] = array_values($currentData[$collection]);
+                        }
+                    }
+
+                    $serialized = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    if ($serialized === false || strlen($serialized) > MAX_SHARED_STORE_BYTES) {
+                        $pdo->rollBack();
+                        respond(413, ['error' => 'The shared store data is too large to save.']);
+                    }
+                    $statement = $pdo->prepare(
+                        'UPDATE shared_store SET store_data = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE store_key = ?'
+                    );
+                    $statement->execute([$serialized, 'main']);
+                    $revision = $currentRevision + 1;
+                } else {
+                    if ($expectedRevision !== 0) {
+                        $pdo->rollBack();
+                        respond(409, [
+                            'error' => 'The shared store changed in another admin session. Reload the admin page before making more changes.',
+                            'revision' => 0,
+                        ]);
+                    }
+                    $statement = $pdo->prepare(
+                        'INSERT INTO shared_store (store_key, store_data, revision, updated_at) VALUES (?, ?, 1, CURRENT_TIMESTAMP)'
+                    );
+                    $statement->execute(['main', $serialized]);
+                    $revision = 1;
+                }
+
+                $pdo->commit();
+                respond(200, ['revision' => $revision]);
+            } catch (Throwable $error) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $error;
+            }
 
         case 'order-create':
             requireMethod('POST');
@@ -628,6 +838,7 @@ function normalizeStoreData(mixed $data): array
         if (!is_array($data[$key] ?? null)) respond(422, ['error' => 'Invalid shared store collection: ' . $key]);
         $normalized[$key] = array_values($data[$key]);
     }
+    $normalized['categories'] = array_values(is_array($data['categories'] ?? null) ? $data['categories'] : []);
     foreach (['settings', 'policies'] as $key) {
         if (!is_array($data[$key] ?? null)) respond(422, ['error' => 'Invalid shared store section: ' . $key]);
         $normalized[$key] = $data[$key];
@@ -652,7 +863,7 @@ function appendSharedRecord(PDO $pdo, string $collection, array $record): void
         }
         array_unshift($data[$collection], $record);
         $updated = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        if ($updated === false || strlen($updated) > 4_500_000) {
+        if ($updated === false || strlen($updated) > MAX_SHARED_STORE_BYTES) {
             $pdo->rollBack();
             respond(413, ['error' => 'Store data is too large to add this record.']);
         }
@@ -694,7 +905,7 @@ function updateSharedOrderStatus(PDO $pdo, string $orderId, string $status): arr
             return false;
         }
         $updated = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        if ($updated === false || strlen($updated) > 4_500_000) {
+        if ($updated === false || strlen($updated) > MAX_SHARED_STORE_BYTES) {
             $pdo->rollBack();
             respond(413, ['error' => 'Store data is too large to update this order.']);
         }
@@ -737,7 +948,7 @@ function normalizeAddress(mixed $address): array
 function publicStoreData(array $data): array
 {
     $public = [];
-    foreach (['products', 'banners', 'promoCards', 'offers', 'videos', 'settings', 'policies'] as $key) {
+    foreach (['products', 'categories', 'banners', 'promoCards', 'offers', 'videos', 'settings', 'policies'] as $key) {
         if (array_key_exists($key, $data)) {
             $public[$key] = $key === 'products'
                 ? array_values(array_filter($data[$key], 'isPublishableProduct'))
@@ -775,7 +986,7 @@ function publicCustomer(array $customer): array
         'id' => $customer['id'],
         'name' => $customer['name'],
         'email' => $customer['email'],
-        'phone' => $customer['phone'] ?: '',
+        'phone' => $customer['phone'] ?: ($customer['phone_digits'] ?? ''),
         'provider' => $customer['provider'],
         'providers' => json_decode($customer['providers'] ?? '[]', true) ?: [],
         'address' => $customer['address'] ?? '',

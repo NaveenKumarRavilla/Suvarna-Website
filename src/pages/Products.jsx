@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Filter, X } from 'lucide-react';
 import { useAdmin } from '../context/AdminContext';
-import { categoryLabel, navCategories, normalizeCategoryId } from '../data/categories';
+import { categoryLabel, normalizeCategoryId } from '../data/categories';
 import { calcDiscount } from '../utils/helpers';
 import ProductGrid from '../components/products/ProductGrid';
 import ProductFilter from '../components/products/ProductFilter';
@@ -14,7 +14,7 @@ const normalizeFilterValue = (value = '') => String(value || '').trim().toLowerC
 const hiddenCategories = ['home', 'contact', 'services', 'offers'];
 
 export default function Products() {
-  const { storefrontProducts: products } = useAdmin();
+  const { storefrontProducts: products, categories: managedCategories } = useAdmin();
   const [searchParams] = useSearchParams();
   const search = (searchParams.get('search') || '').toLowerCase();
   const urlCategory = searchParams.get('category') || 'all';
@@ -27,26 +27,21 @@ export default function Products() {
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
   const availableCategories = useMemo(() => {
-    const categories = new Map(
-      navCategories
+    const categoryMap = new Map(
+      managedCategories
         .filter((category) => !hiddenCategories.includes(category.id))
-        .filter((category) => products.some(
-          (product) => normalizeCategoryId(product.category) === normalizeCategoryId(category.id)
-        ))
-        .map((category) => [normalizeCategoryId(category.id), {
-          id: normalizeCategoryId(category.id),
-          label: category.label,
-        }])
+        .filter((category) => products.some((product) => normalizeCategoryId(product.category) === category.id))
+        .map((category) => [category.id, { id: category.id, label: category.label }])
     );
 
     products.forEach((product) => {
       const id = normalizeCategoryId(product.category);
-      if (!id || categories.has(id)) return;
-      categories.set(id, { id, label: categoryLabel(id) });
+      if (!id || categoryMap.has(id)) return;
+      categoryMap.set(id, { id, label: categoryLabel(id) });
     });
 
-    return [...categories.values()];
-  }, [products]);
+    return [...categoryMap.values()];
+  }, [managedCategories, products]);
 
   const availableBrands = useMemo(
     () => [...new Map(
@@ -85,11 +80,12 @@ export default function Products() {
     [filters, products, search, offersOnly]
   );
 
+  const categoryName = managedCategories.find((category) => category.id === filters.category)?.label || categoryLabel(filters.category);
   const title = offersOnly
     ? "Today's Offers"
     : search
       ? `Results for "${searchParams.get('search')}"`
-      : categoryLabel(filters.category);
+      : categoryName;
 
   const handleFiltersApplied = () => {
     setMobileFiltersOpen(false);

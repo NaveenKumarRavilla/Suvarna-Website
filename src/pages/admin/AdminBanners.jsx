@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { Plus, Pencil, Trash2, Video, Image as ImageIcon } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Copy, Download, Plus, Pencil, Trash2, Upload, Video, Image as ImageIcon } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 import Button from '../../components/common/Button';
 import ImageUpload from '../../components/admin/ImageUpload';
 import { readVideoFile } from '../../utils/imageUpload';
+import { downloadCsv, parseCsv } from '../../utils/csv';
 import {
   Modal,
   Field,
@@ -33,22 +34,74 @@ const gradients = [
   { label: 'Purple Night', value: 'from-[#1E1B4B] to-[#7C3AED]' },
   { label: 'Warm Ember', value: 'from-[#7C2D12] to-[#F59E0B]' },
 ];
+const bannerCsvHeaders = ['id', 'badge', 'title', 'subtitle', 'cta', 'link', 'image', 'video', 'mediaType', 'mediaFit', 'gradient'];
+
+const parseBannerCsv = (text) => {
+  const rows = parseCsv(text);
+  if (rows.length < 2) throw new Error('The CSV file must include a header row and at least one banner.');
+  const aliases = {
+    id: 'id', badge: 'badge', title: 'title', subtitle: 'subtitle', cta: 'cta', link: 'link',
+    image: 'image', video: 'video', gradient: 'gradient',
+    bannerid: 'id', badgetext: 'badge', bannertitle: 'title', bannersubtitle: 'subtitle',
+    buttontext: 'cta', buttonlabel: 'cta', bannercta: 'cta', targetlink: 'link',
+    bannerlink: 'link', bannerimage: 'image', bannervideo: 'video',
+    mediatype: 'mediaType', mediafit: 'mediaFit',
+  };
+  const headers = rows[0].map((header) => {
+    const normalized = header.trim().toLowerCase().replace(/[\s_-]+/g, '');
+    return aliases[normalized] || header.trim();
+  });
+  if (new Set(headers).size !== headers.length) throw new Error('The CSV file contains duplicate column names.');
+  if (!headers.includes('title')) throw new Error('The CSV file is missing the required title column.');
+
+  const ids = new Set();
+  return rows.slice(1).map((cells, rowIndex) => {
+    const rowNumber = rowIndex + 2;
+    const record = Object.fromEntries(headers.map((header, index) => {
+      const value = cells[index] || '';
+      if (value.trim().startsWith('{') || value.trim().startsWith('[')) {
+        try {
+          return [header, JSON.parse(value)];
+        } catch {
+          throw new Error(`Row ${rowNumber}: ${header} contains invalid JSON.`);
+        }
+      }
+      return [header, value];
+    }));
+    const id = String(record.id || '').trim();
+    if (id && ids.has(id)) throw new Error(`Row ${rowNumber}: banner ID "${id}" appears more than once in the CSV.`);
+    if (id) ids.add(id);
+    if (!String(record.title || '').trim()) throw new Error(`Row ${rowNumber}: title is required.`);
+    const banner = Object.fromEntries(Object.entries(record).filter(([field]) => field !== 'id'));
+    if (banner.mediaType && !['image', 'video'].includes(banner.mediaType)) {
+      throw new Error(`Row ${rowNumber}: mediaType must be image or video.`);
+    }
+    return { id, banner };
+  });
+};
 
 export default function AdminBanners() {
   const { banners, addBanner, updateBanner, deleteBanner } = useAdmin();
   const [editing, setEditing] = useState(null);
+  const [isCloning, setIsCloning] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [modalOpen, setModalOpen] = useState(false);
   const [videoError, setVideoError] = useState('');
+  const [importError, setImportError] = useState('');
+  const [importStatus, setImportStatus] = useState('');
+  const [importing, setImporting] = useState(false);
+  const importInputRef = useRef(null);
 
   const openAdd = () => {
     setEditing(null);
+    setIsCloning(false);
     setForm(emptyForm);
     setVideoError('');
     setModalOpen(true);
   };
   const openEdit = (b) => {
     setEditing(b);
+    setIsCloning(false);
     setForm({
       badge: b.badge,
       title: b.title,
@@ -59,6 +112,24 @@ export default function AdminBanners() {
       video: b.video || '',
       mediaType: b.mediaType || (b.video ? 'video' : 'image'),
       mediaFit: b.mediaFit || 'contain',
+    });
+    setVideoError('');
+    setModalOpen(true);
+  };
+  const openClone = (banner) => {
+    setEditing(null);
+    setIsCloning(true);
+    setForm({
+      badge: banner.badge || '',
+      title: `Copy of ${banner.title || ''}`,
+      subtitle: banner.subtitle || '',
+      cta: banner.cta || 'SHOP NOW',
+      link: banner.link || '/products',
+      image: banner.image || '',
+      video: banner.video || '',
+      mediaType: banner.mediaType || (banner.video ? 'video' : 'image'),
+      mediaFit: banner.mediaFit || 'contain',
+      gradient: banner.gradient || gradients[0].value,
     });
     setVideoError('');
     setModalOpen(true);
@@ -86,7 +157,7 @@ export default function AdminBanners() {
     const payload = {
       ...form,
       mediaType: form.mediaType || 'image',
-      gradient: editing?.gradient || gradients[0].value,
+      gradient: editing?.gradient || form.gradient || gradients[0].value,
     };
 
     if (payload.mediaType === 'image') {
@@ -95,21 +166,65 @@ export default function AdminBanners() {
       payload.image = '';
     }
 
-    try {
-      localStorage.removeItem('suvarna_admin_store');
-      localStorage.removeItem('suvarna_hero_banner_index');
-    } catch {
-      // storage unavailable
-    }
-
     if (editing) updateBanner(editing.id, payload);
     else addBanner(payload);
     setModalOpen(false);
   };
 
+  const exportBanners = () => {
+    const headers = [...new Set([...bannerCsvHeaders, ...banners.flatMap((banner) => Object.keys(banner))])];
+    downloadCsv(
+      'suvarna-banners.csv',
+      headers,
+      banners.map((banner) => headers.map((header) => {
+        const value = banner[header];
+        return value && typeof value === 'object' ? JSON.stringify(value) : value ?? '';
+      })),
+    );
+  };
+
+  const importBanners = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setImporting(true);
+    setImportError('');
+    setImportStatus('');
+    try {
+      const imported = parseBannerCsv(await file.text());
+      const existingBanners = new Map(banners.map((banner) => [String(banner.id), banner]));
+      const plans = imported.map(({ id, banner }) => {
+        const existing = id ? existingBanners.get(id) : null;
+        if (existing) return { existing, banner };
+        const newBanner = { ...emptyForm, ...banner, gradient: banner.gradient || gradients[0].value };
+        const mediaType = banner.mediaType || (newBanner.video ? 'video' : 'image');
+        newBanner.mediaType = mediaType;
+        if (mediaType === 'video' ? !newBanner.video : !newBanner.image) {
+          throw new Error(`New banner "${newBanner.title}" must include its ${mediaType} media.`);
+        }
+        return { banner: newBanner };
+      });
+      let updated = 0;
+      let added = 0;
+      plans.forEach(({ existing, banner }) => {
+        if (existing) {
+          updateBanner(existing.id, banner);
+          updated += 1;
+        } else {
+          addBanner(banner);
+          added += 1;
+        }
+      });
+      setImportStatus(`Imported ${imported.length} banner${imported.length === 1 ? '' : 's'}: ${added} added, ${updated} updated.`);
+    } catch (error) {
+      setImportError(error.message || 'The selected CSV file could not be imported.');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const resetBannerCache = () => {
     try {
-      localStorage.removeItem('suvarna_admin_store');
       localStorage.removeItem('suvarna_hero_banner_index');
     } catch {
       // storage unavailable
@@ -124,6 +239,13 @@ export default function AdminBanners() {
         subtitle="Hero slider slides shown on the home page"
         action={
           <div className="flex items-center gap-2">
+            <Button type="button" variant="secondary" size="md" onClick={exportBanners} disabled={banners.length === 0}>
+              <Download size={16} />Export CSV
+            </Button>
+            <Button type="button" variant="secondary" size="md" onClick={() => importInputRef.current?.click()} disabled={importing}>
+              <Upload size={16} />{importing ? 'Importing...' : 'Import CSV'}
+            </Button>
+            <input ref={importInputRef} type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" onChange={importBanners} className="hidden" aria-label="Import banners from CSV" />
             <Button variant="secondary" size="md" onClick={openAdd}>
               <Plus size={16} />
               Add Slide
@@ -134,6 +256,10 @@ export default function AdminBanners() {
           </div>
         }
       />
+
+      <p className="mb-4 text-xs text-slate-500">Banner imports merge matching IDs and add rows with new or blank IDs. Exports include image/video media and all banner fields; large embedded media may produce large CSV files.</p>
+      {importError && <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{importError}</p>}
+      {importStatus && <p role="status" className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{importStatus}</p>}
 
       <div className={tableWrap}>
         <table className={tableCls}>
@@ -176,6 +302,9 @@ export default function AdminBanners() {
                     <button type="button" onClick={() => openEdit(b)} aria-label={`Edit ${b.title}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary">
                       <Pencil size={15} />
                     </button>
+                    <button type="button" onClick={() => openClone(b)} aria-label={`Clone ${b.title}`} title="Clone banner" className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary">
+                      <Copy size={15} />
+                    </button>
                     <button
                       type="button"
                       onClick={() => banners.length > 1 && deleteBanner(b.id)}
@@ -194,7 +323,7 @@ export default function AdminBanners() {
       </div>
 
       {modalOpen && (
-        <Modal title={editing ? 'Edit Slide' : 'Add Slide'} onClose={() => setModalOpen(false)}>
+        <Modal title={editing ? 'Edit Slide' : isCloning ? 'Clone Slide' : 'Add Slide'} onClose={() => setModalOpen(false)}>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <Field label="Badge">

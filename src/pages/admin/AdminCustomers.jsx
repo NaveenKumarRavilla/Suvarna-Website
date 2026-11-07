@@ -1,13 +1,63 @@
-import { useEffect, useState } from 'react';
-import { Trash2, Mail, Phone, ShieldCheck, RefreshCw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Trash2, Mail, Phone, ShieldCheck, RefreshCw, Download, Upload, UserPlus, Pencil } from 'lucide-react';
 import Button from '../../components/common/Button';
-import { PageHeader, tableWrap, tableCls, thCls, tdCls } from '../../components/admin/AdminForm';
+import { Field, Modal, PageHeader, inputCls, tableWrap, tableCls, thCls, tdCls } from '../../components/admin/AdminForm';
 import { apiRequest } from '../../utils/api';
+import { downloadCsv, parseCsv } from '../../utils/csv';
+
+const customerCsvHeaders = ['id', 'name', 'email', 'phone', 'address', 'city', 'pin', 'provider', 'providers', 'orders', 'joined'];
+const emptyCustomerForm = { name: '', email: '', phone: '', address: '', city: '', pin: '' };
+
+const parseCustomerCsv = (text) => {
+  const rows = parseCsv(text);
+  if (rows.length < 2) throw new Error('The CSV file must include a header row and at least one customer.');
+  const aliases = {
+    id: 'id', name: 'name', customername: 'name', email: 'email', customeremail: 'email',
+    phone: 'phone', mobile: 'phone', mobilenumber: 'phone', address: 'address', city: 'city',
+    pin: 'pin', postalcode: 'pin', pincode: 'pin', joined: 'joined', provider: 'provider',
+    providers: 'providers', orders: 'orders',
+  };
+  const headers = rows[0].map((header) => {
+    const normalized = header.trim().toLowerCase().replace(/[\s_-]+/g, '');
+    return aliases[normalized] || normalized;
+  });
+  if (new Set(headers).size !== headers.length) throw new Error('The CSV file contains duplicate column names.');
+  for (const required of ['name', 'email']) {
+    if (!headers.includes(required)) throw new Error(`The CSV file is missing the required ${required} column.`);
+  }
+  if (rows.length > 501) throw new Error('Import a maximum of 500 customers at a time.');
+
+  const seenEmails = new Set();
+  return rows.slice(1).map((cells, rowIndex) => {
+    const rowNumber = rowIndex + 2;
+    const record = Object.fromEntries(headers.map((header, index) => [header, cells[index] || '']));
+    const email = String(record.email || '').trim().toLowerCase();
+    const name = String(record.name || '').trim();
+    if (!name) throw new Error(`Row ${rowNumber}: name is required.`);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error(`Row ${rowNumber}: enter a valid email address.`);
+    if (seenEmails.has(email)) throw new Error(`Row ${rowNumber}: email "${email}" appears more than once in the CSV.`);
+    seenEmails.add(email);
+    return Object.fromEntries(
+      ['name', 'email', 'phone', 'address', 'city', 'pin', 'joined']
+        .filter((field) => headers.includes(field))
+        .map((field) => [field, field === 'name' ? name : field === 'email' ? email : String(record[field] || '').trim()]),
+    );
+  });
+};
 
 export default function AdminCustomers() {
   const [customers, setCustomers] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [savingCustomer, setSavingCustomer] = useState(false);
+  const [importStatus, setImportStatus] = useState('');
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [customerForm, setCustomerForm] = useState(emptyCustomerForm);
+  const [phoneEditCustomer, setPhoneEditCustomer] = useState(null);
+  const [phoneDraft, setPhoneDraft] = useState('');
+  const [savingPhone, setSavingPhone] = useState(false);
+  const importInputRef = useRef(null);
 
   const loadCustomers = async () => {
     setLoading(true);
@@ -45,15 +95,106 @@ export default function AdminCustomers() {
     }
   };
 
+  const exportCustomers = () => {
+    downloadCsv(
+      'suvarna-customers.csv',
+      customerCsvHeaders,
+      customers.map((customer) => customerCsvHeaders.map((header) => {
+        const value = header === 'joined' ? customer.joined : customer[header];
+        return Array.isArray(value) ? value.join(', ') : value ?? '';
+      })),
+    );
+  };
+
+  const importCustomers = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setImporting(true);
+    setError('');
+    setImportStatus('');
+    try {
+      const imported = parseCustomerCsv(await file.text());
+      const result = await apiRequest('customers-import', { method: 'POST', body: { customers: imported } });
+      setImportStatus(`Imported ${result.created + result.updated} customer${result.created + result.updated === 1 ? '' : 's'}: ${result.created} added, ${result.updated} updated.`);
+      await loadCustomers();
+    } catch (requestError) {
+      setError(requestError.message || 'The selected CSV file could not be imported.');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const addCustomer = async (event) => {
+    event.preventDefault();
+    setSavingCustomer(true);
+    setError('');
+    setImportStatus('');
+    try {
+      const result = await apiRequest('customers-import', {
+        method: 'POST',
+        body: { customers: [customerForm], createOnly: true },
+      });
+      setImportStatus(result.created
+        ? 'Customer profile added. The customer can sign in with Google using this email and set a password after verification.'
+        : 'Customer profile updated.');
+      setCustomerModalOpen(false);
+      setCustomerForm(emptyCustomerForm);
+      await loadCustomers();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSavingCustomer(false);
+    }
+  };
+
+  const saveCustomerPhone = async (event) => {
+    event.preventDefault();
+    if (!phoneEditCustomer) return;
+    setSavingPhone(true);
+    setError('');
+    setImportStatus('');
+    try {
+      const result = await apiRequest('customers-update-phone', {
+        method: 'POST',
+        body: { id: phoneEditCustomer.id, phone: phoneDraft.trim() },
+      });
+      setCustomers((current) => current.map((customer) => (
+        String(customer.id) === String(phoneEditCustomer.id)
+          ? { ...customer, phone: result.phone }
+          : customer
+      )));
+      setPhoneEditCustomer(null);
+      setPhoneDraft('');
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSavingPhone(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader
         title="Manage Customers"
         subtitle={`${customers.length} registered customers`}
-        action={<Button type="button" variant="secondary" size="sm" onClick={loadCustomers} disabled={loading}><RefreshCw size={14} />{loading ? 'Refreshing...' : 'Refresh'}</Button>}
+        action={
+          <>
+            <Button type="button" variant="primary" size="sm" onClick={() => { setCustomerForm(emptyCustomerForm); setError(''); setCustomerModalOpen(true); }}>
+              <UserPlus size={14} />Add Customer
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={() => importInputRef.current?.click()} disabled={importing || loading}>
+              <Upload size={14} />{importing ? 'Importing...' : 'Import CSV'}
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={exportCustomers} disabled={loading || customers.length === 0}><Download size={14} />Export CSV</Button>
+            <Button type="button" variant="secondary" size="sm" onClick={loadCustomers} disabled={loading}><RefreshCw size={14} />{loading ? 'Refreshing...' : 'Refresh'}</Button>
+            <input ref={importInputRef} type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" onChange={importCustomers} className="hidden" aria-label="Import customer profiles from CSV" />
+          </>
+        }
       />
-      <p className="mb-4 text-xs text-slate-500">Customer accounts and matching order counts are shared through the Hostinger database.</p>
+      <p className="mb-4 text-xs text-slate-500">Customer profile imports match by email and update contact details only. New profiles have no password; customers can verify with Google to set one. Passwords, login providers and orders are never imported or changed.</p>
       {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{error}</p>}
+      {importStatus && <p role="status" className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{importStatus}</p>}
       {customers.length === 0 ? (
         <div className="rounded-xl bg-white p-10 text-center shadow-card">
           <p className="text-sm text-slate-500">{error ? 'Customer data could not be loaded.' : 'No customers yet. Users who register or sign in with Google will appear here.'}</p>
@@ -87,7 +228,16 @@ export default function AdminCustomers() {
                       <Mail size={12} /> {c.email}
                     </span>
                     <span className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
-                      <Phone size={12} /> {c.phone}
+                      <Phone size={12} /> {c.phone || 'Not provided'}
+                      <button
+                        type="button"
+                        onClick={() => { setPhoneEditCustomer(c); setPhoneDraft(c.phone || ''); setError(''); }}
+                        aria-label={`Edit phone number for ${c.name}`}
+                        title="Edit phone number"
+                        className="ml-1 rounded p-1 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary"
+                      >
+                        <Pencil size={12} />
+                      </button>
                     </span>
                   </td>
                   <td className={tdCls}>
@@ -97,7 +247,7 @@ export default function AdminCustomers() {
                       {c.provider === 'google' && <ShieldCheck size={11} />}
                       {c.providers?.length
                         ? c.providers.map((provider) => provider === 'google' ? 'Google' : 'Email').join(' + ')
-                        : c.provider === 'google' ? 'Google' : 'Email'}
+                        : c.provider === 'google' ? 'Google' : c.provider === 'profile' ? 'Profile only' : 'Email'}
                     </span>
                   </td>
                   <td className={tdCls}>
@@ -121,6 +271,61 @@ export default function AdminCustomers() {
             </tbody>
           </table>
         </div>
+      )}
+      {customerModalOpen && (
+        <Modal title="Add Customer Profile" onClose={() => !savingCustomer && setCustomerModalOpen(false)}>
+          <form onSubmit={addCustomer} className="space-y-4">
+            {error && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-600">{error}</p>}
+            <Field label="Name *">
+              <input required maxLength={160} value={customerForm.name} onChange={(event) => setCustomerForm((current) => ({ ...current, name: event.target.value }))} className={inputCls} />
+            </Field>
+            <Field label="Email *">
+              <input required type="email" maxLength={254} value={customerForm.email} onChange={(event) => setCustomerForm((current) => ({ ...current, email: event.target.value }))} className={inputCls} />
+            </Field>
+            <Field label="Phone">
+              <input type="tel" maxLength={40} value={customerForm.phone} onChange={(event) => setCustomerForm((current) => ({ ...current, phone: event.target.value }))} className={inputCls} />
+            </Field>
+            <Field label="Address">
+              <input maxLength={500} value={customerForm.address} onChange={(event) => setCustomerForm((current) => ({ ...current, address: event.target.value }))} className={inputCls} />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="City">
+                <input maxLength={120} value={customerForm.city} onChange={(event) => setCustomerForm((current) => ({ ...current, city: event.target.value }))} className={inputCls} />
+              </Field>
+              <Field label="PIN code">
+                <input maxLength={20} value={customerForm.pin} onChange={(event) => setCustomerForm((current) => ({ ...current, pin: event.target.value }))} className={inputCls} />
+              </Field>
+            </div>
+            <p className="text-xs text-slate-500">A profile is created without a password. The customer can verify ownership with Google before setting one.</p>
+            <div className="flex gap-3">
+              <Button type="button" variant="ghost" className="flex-1" onClick={() => setCustomerModalOpen(false)} disabled={savingCustomer}>Cancel</Button>
+              <Button type="submit" variant="primary" className="flex-1" disabled={savingCustomer}>{savingCustomer ? 'Saving...' : 'Add Customer'}</Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+      {phoneEditCustomer && (
+        <Modal title={`Edit Phone — ${phoneEditCustomer.name}`} onClose={() => !savingPhone && setPhoneEditCustomer(null)}>
+          <form onSubmit={saveCustomerPhone} className="space-y-4">
+            {error && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-600">{error}</p>}
+            <Field label="Phone number">
+              <input
+                autoFocus
+                type="tel"
+                maxLength={40}
+                value={phoneDraft}
+                onChange={(event) => setPhoneDraft(event.target.value)}
+                className={inputCls}
+                placeholder="+91 98765 43210"
+              />
+            </Field>
+            <p className="text-xs text-slate-500">Leave blank to remove the phone number. Otherwise enter 10–15 digits.</p>
+            <div className="flex gap-3">
+              <Button type="button" variant="ghost" className="flex-1" onClick={() => setPhoneEditCustomer(null)} disabled={savingPhone}>Cancel</Button>
+              <Button type="submit" variant="primary" className="flex-1" disabled={savingPhone}>{savingPhone ? 'Saving...' : 'Save Phone'}</Button>
+            </div>
+          </form>
+        </Modal>
       )}
     </div>
   );

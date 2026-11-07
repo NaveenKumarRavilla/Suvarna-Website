@@ -1,6 +1,6 @@
 const API_PATH = '/api/index.php';
 
-export async function apiRequest(action, { method = 'GET', body, query } = {}) {
+export async function apiRequest(action, { method = 'GET', body, query, keepalive = false } = {}) {
   const url = new URL(API_PATH, window.location.origin);
   url.searchParams.set('action', action);
   Object.entries(query || {}).forEach(([key, value]) => {
@@ -11,6 +11,7 @@ export async function apiRequest(action, { method = 'GET', body, query } = {}) {
     response = await fetch(url, {
       method,
       credentials: 'same-origin',
+      keepalive,
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });

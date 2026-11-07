@@ -14,7 +14,40 @@ import {
   RefreshCcw,
   BadgePercent,
   Phone,
+  Package,
 } from 'lucide-react';
+
+export const categoryIconMap = {
+  Laptop,
+  Monitor,
+  Server,
+  Printer,
+  Cctv,
+  Network,
+  Cable,
+  HardDrive,
+  Gamepad2,
+  Headphones,
+  Wrench,
+  RefreshCcw,
+  Package,
+};
+
+const categoryIconKeys = {
+  laptops: 'Laptop',
+  desktops: 'Monitor',
+  servers: 'Server',
+  printers: 'Printer',
+  cctv: 'Cctv',
+  networking: 'Network',
+  'fiber-optics': 'Cable',
+  storage: 'HardDrive',
+  gaming: 'Gamepad2',
+  peripherals: 'Headphones',
+  accessories: 'Headphones',
+  services: 'Wrench',
+  refurbished: 'RefreshCcw',
+};
 
 export const navCategories = [
   { id: 'home', label: 'Home', icon: Home, path: '/' },
@@ -27,12 +60,57 @@ export const navCategories = [
   { id: 'fiber-optics', label: 'Fiber Optics', icon: Cable },
   { id: 'storage', label: 'Storage', icon: HardDrive },
   { id: 'gaming', label: 'Gaming', icon: Gamepad2 },
+  { id: 'peripherals', label: 'Peripherals', icon: Headphones },
   { id: 'accessories', label: 'Accessories', icon: Headphones },
   { id: 'services', label: 'Services', icon: Wrench, path: '/services' },
   { id: 'refurbished', label: 'Refurbished', icon: RefreshCcw },
   { id: 'offers', label: 'Offers', icon: BadgePercent, special: true },
   { id: 'contact', label: 'Contact', icon: Phone, path: '/contact' },
 ];
+
+export const navIconFiles = {
+  home: 'home.png',
+  laptops: 'laptops.png',
+  desktops: 'desktops.png',
+  servers: 'servers.png',
+  printers: 'printers.png',
+  cctv: 'cctv.png',
+  networking: 'networking.png',
+  'fiber-optics': 'fiber-optics.png',
+  storage: 'storage.png',
+  gaming: 'gaming.png',
+  peripherals: 'peripherals.png',
+  accessories: 'accessories.png',
+  refurbished: 'refurbished.png',
+  services: 'services.png',
+  offers: 'offers.png',
+  contact: 'contact.png',
+};
+
+export const getVisibleNavigationCategories = (categories) => {
+  const fixedItems = new Map(navCategories.map((category) => [category.id, category]));
+  const categoryOrder = new Map(
+    navCategories.map((category, index) => [category.id, index])
+  );
+  const availableCategories = categories
+    .filter((category) => !['home', 'services', 'offers', 'contact'].includes(category.id))
+    .map((category) => ({
+      ...category,
+      icon: categoryIconMap[category.iconKey] || categoryIconMap.Package,
+    }))
+    .sort((left, right) =>
+      (categoryOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+      (categoryOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+    );
+
+  return [
+    fixedItems.get('home'),
+    ...availableCategories,
+    fixedItems.get('services'),
+    fixedItems.get('offers'),
+    fixedItems.get('contact'),
+  ];
+};
 
 export const gridCategories = [
   {
@@ -91,6 +169,22 @@ export const gridCategories = [
     gradient: 'from-pink-500 to-fuchsia-600',
     tagline: 'Peripherals & More',
   },
+];
+
+export const defaultManagedCategories = [
+  ...gridCategories.map(({ icon, ...category }) => ({
+    ...category,
+    iconKey: categoryIconKeys[category.id] || 'Package',
+  })),
+  ...navCategories
+    .filter((category) => !category.path && !category.special && !gridCategories.some((item) => item.id === category.id))
+    .map((category) => ({
+      id: category.id,
+      label: category.label,
+      tagline: '',
+      gradient: 'from-slate-600 to-slate-800',
+      iconKey: categoryIconKeys[category.id] || 'Package',
+    })),
 ];
 
 export const normalizeCategoryId = (value = '') =>

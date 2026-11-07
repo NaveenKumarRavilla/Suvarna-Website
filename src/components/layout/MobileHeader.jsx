@@ -4,7 +4,7 @@ import { Menu, User, X, LogOut } from 'lucide-react';
 import SearchBar from '../common/SearchBar';
 import { Logo, CartLink, WishlistLink } from './Header';
 import SiteNotificationBell from '../common/SiteNotificationBell';
-import { navCategories, normalizeCategoryId } from '../../data/categories';
+import { getVisibleNavigationCategories, navIconFiles } from '../../data/categories';
 import { useAdmin } from '../../context/AdminContext';
 import { useAuth } from '../../context/AuthContext';
 
@@ -18,13 +18,8 @@ export default function MobileHeader() {
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const { user, isLoggedIn, logout: logoutAuth } = useAuth();
-  const { isAdmin, currentAdmin, currentUser, storefrontProducts: products, logout: logoutAdmin } = useAdmin();
-  const visibleCategories = navCategories.filter((category) =>
-    category.path ||
-    category.special ||
-    ['home', 'contact'].includes(category.id) ||
-    products.some((product) => normalizeCategoryId(product.category) === category.id)
-  );
+  const { isAdmin, currentAdmin, currentUser, categories, logout: logoutAdmin } = useAdmin();
+  const visibleCategories = getVisibleNavigationCategories(categories);
 
   useEffect(() => {
     setOpen(false);
@@ -102,7 +97,16 @@ export default function MobileHeader() {
                   to={categoryLink(cat)}
                   className="flex items-center gap-3 px-5 py-3 text-sm font-medium text-slate-700 transition hover:bg-surface hover:text-secondary"
                 >
-                  <cat.icon size={18} className="text-secondary" />
+                  {navIconFiles[cat.id] ? (
+                    <img
+                      src={`/nav-icons/${navIconFiles[cat.id]}`}
+                      alt=""
+                      aria-hidden="true"
+                      className="h-6 w-6 object-contain"
+                    />
+                  ) : (
+                    <cat.icon size={18} className="text-secondary" />
+                  )}
                   {cat.label}
                 </Link>
               ))}

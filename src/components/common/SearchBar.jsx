@@ -1,16 +1,17 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
-import { navCategories } from '../../data/categories';
+import { useAdmin } from '../../context/AdminContext';
 
 const HIDDEN_FROM_SEARCH = ['home', 'contact', 'services', 'offers'];
 
 export default function SearchBar() {
+  const { categories } = useAdmin();
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
   const navigate = useNavigate();
 
-  const searchable = navCategories.filter((c) => !HIDDEN_FROM_SEARCH.includes(c.id));
+  const searchable = categories.filter((category) => !HIDDEN_FROM_SEARCH.includes(category.id));
 
   const handleSubmit = (e) => {
     e.preventDefault();
