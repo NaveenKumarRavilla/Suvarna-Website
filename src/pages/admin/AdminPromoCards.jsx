@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Images, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 import Button from '../../components/common/Button';
@@ -20,6 +20,7 @@ const emptyForm = {
   image: '',
   gradient: 'from-[#071B3D] to-[#0D5DB8]',
 };
+const PROMO_DRAFT_KEY = 'suvarna_admin_promo_form_draft';
 
 const gradients = [
   { label: 'Navy to blue', value: 'from-[#071B3D] to-[#0D5DB8]' },
@@ -35,6 +36,21 @@ export default function AdminPromoCards() {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+
+  useEffect(() => {
+    try {
+      const draft = JSON.parse(localStorage.getItem(PROMO_DRAFT_KEY) || 'null');
+      if (draft?.form) { setForm({ ...emptyForm, ...draft.form }); setEditingId(draft.editingId ?? null); setModalOpen(true); setSaveError('Recovered an unsaved promo card form from this browser.'); }
+    } catch (error) { console.error('Could not restore promo card draft.', error); }
+  }, []);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    try { localStorage.setItem(PROMO_DRAFT_KEY, JSON.stringify({ form, editingId })); }
+    catch (error) { console.error('Could not preserve promo card draft.', error); }
+  }, [editingId, form, modalOpen]);
 
   const openAdd = () => {
     setEditingId(null);
@@ -59,7 +75,7 @@ export default function AdminPromoCards() {
   const set = (key) => (event) =>
     setForm((current) => ({ ...current, [key]: event.target.value }));
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
     const payload = {
       ...form,
@@ -70,8 +86,12 @@ export default function AdminPromoCards() {
       link: form.link.trim(),
     };
 
-    if (editingId !== null) updatePromoCard(editingId, payload);
-    else addPromoCard(payload);
+    setSaving(true);
+    const saved = editingId !== null ? await updatePromoCard(editingId, payload) : await addPromoCard(payload);
+    setSaving(false);
+    if (!saved) { setSaveError('Promo card was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'); return; }
+    setSaveError('');
+    localStorage.removeItem(PROMO_DRAFT_KEY);
     setModalOpen(false);
   };
 
@@ -151,6 +171,7 @@ export default function AdminPromoCards() {
       {modalOpen && (
         <Modal title={editingId === null ? 'Add Promo Card' : 'Edit Promo Card'} onClose={() => setModalOpen(false)}>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {saveError && <p role="alert" className="text-sm text-red-600">{saveError}</p>}
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Tag">
                 <input value={form.tag} onChange={set('tag')} className={inputCls} placeholder="HP LASER PRINTERS" />
@@ -181,8 +202,8 @@ export default function AdminPromoCards() {
               onChange={(image) => setForm((current) => ({ ...current, image }))}
             />
             <div className="flex gap-3 pt-1">
-              <Button type="submit" variant="primary" className="flex-1">
-                {editingId === null ? 'Add Promo Card' : 'Save Changes'}
+              <Button type="submit" variant="primary" className="flex-1" disabled={saving}>
+                {saving ? 'Saving…' : editingId === null ? 'Add Promo Card' : 'Save Changes'}
               </Button>
               <Button type="button" variant="ghost" onClick={() => setModalOpen(false)}>
                 Cancel

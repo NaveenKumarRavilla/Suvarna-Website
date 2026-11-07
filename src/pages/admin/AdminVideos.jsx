@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Trash2, Youtube } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 import Button from '../../components/common/Button';
@@ -11,6 +11,7 @@ import {
 } from '../../components/admin/AdminForm';
 
 const emptyForm = { title: '', youtubeId: '', category: 'laptops' };
+const VIDEO_DRAFT_KEY = 'suvarna_admin_video_form_draft';
 
 export default function AdminVideos() {
   const { videos, addVideo, updateVideo, deleteVideo } = useAdmin();
@@ -18,6 +19,16 @@ export default function AdminVideos() {
   const [modalOpen, setModalOpen] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    try { const draft = JSON.parse(localStorage.getItem(VIDEO_DRAFT_KEY) || 'null'); if (draft?.form) { setForm({ ...emptyForm, ...draft.form }); setModalOpen(true); setSaveError('Recovered an unsaved video form from this browser.'); } }
+    catch (error) { console.error('Could not restore video draft.', error); }
+  }, []);
+  useEffect(() => {
+    if (!modalOpen) return;
+    try { localStorage.setItem(VIDEO_DRAFT_KEY, JSON.stringify({ form })); }
+    catch (error) { console.error('Could not preserve video draft.', error); }
+  }, [form, modalOpen]);
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -33,6 +44,7 @@ export default function AdminVideos() {
     setSaving(false);
     if (!saved) { setSaveError('Video was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'); return; }
     setSaveError('');
+    localStorage.removeItem(VIDEO_DRAFT_KEY);
     setForm(emptyForm);
     setModalOpen(false);
   };

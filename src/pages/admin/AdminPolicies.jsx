@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FileText, ExternalLink, Plus, Save, Trash2, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAdmin } from '../../context/AdminContext';
@@ -11,6 +11,7 @@ const emptyForm = {
   summary: '',
   items: [{ heading: '', text: '' }],
 };
+const POLICY_DRAFT_KEY = 'suvarna_admin_policy_form_draft';
 
 const orderedPolicyIds = (policies) => [
   ...policyOptions.map(({ id }) => id).filter((id) => policies[id]),
@@ -23,6 +24,20 @@ export default function AdminPolicies() {
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    try {
+      const draft = JSON.parse(localStorage.getItem(POLICY_DRAFT_KEY) || 'null');
+      if (draft?.form) { setForm(draft.form); setEditingId(draft.editingId ?? ''); setNotice('Recovered an unsaved policy form from this browser.'); }
+    } catch (restoreError) { console.error('Could not restore policy draft.', restoreError); }
+  }, []);
+
+  useEffect(() => {
+    if (editingId === null) return;
+    try { localStorage.setItem(POLICY_DRAFT_KEY, JSON.stringify({ form, editingId })); }
+    catch (draftError) { console.error('Could not preserve policy draft.', draftError); }
+  }, [editingId, form]);
 
   const setField = (key) => (event) =>
     setForm((current) => ({ ...current, [key]: event.target.value }));
@@ -31,6 +46,7 @@ export default function AdminPolicies() {
     setForm(emptyForm);
     setEditingId(null);
     setError('');
+    try { localStorage.removeItem(POLICY_DRAFT_KEY); } catch (draftError) { console.error('Could not clear policy draft.', draftError); }
   };
 
   const editPolicy = (id) => {
@@ -54,7 +70,7 @@ export default function AdminPolicies() {
     }));
   };
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
     const title = form.title.trim();
     const summary = form.summary.trim();
@@ -78,8 +94,10 @@ export default function AdminPolicies() {
     }
 
     const policy = { title, summary, items };
-    if (editingId) updatePolicy(id, policy);
-    else addPolicy(id, policy);
+    setSaving(true);
+    const saved = editingId ? await updatePolicy(id, policy) : await addPolicy(id, policy);
+    setSaving(false);
+    if (!saved) { setError('Policy was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'); return; }
 
     closeEditor();
     setNotice(`"${title}" was ${editingId ? 'updated' : 'added'}.`);
@@ -182,7 +200,7 @@ export default function AdminPolicies() {
 
           {error && <p role="alert" className="mt-4 text-sm font-medium text-red-600">{error}</p>}
           <div className="mt-5 flex flex-wrap gap-3">
-            <Button type="submit" variant="primary"><Save size={16} /> Save Policy</Button>
+            <Button type="submit" variant="primary" disabled={saving}><Save size={16} /> {saving ? 'Saving…' : 'Save Policy'}</Button>
             <Button type="button" variant="ghost" onClick={closeEditor}>Cancel</Button>
           </div>
         </form>

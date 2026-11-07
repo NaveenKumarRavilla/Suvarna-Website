@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Trash2, BadgePercent } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 import Button from '../../components/common/Button';
@@ -11,6 +11,7 @@ import {
 } from '../../components/admin/AdminForm';
 
 const emptyForm = { title: '', description: '', discount: '', category: 'laptops' };
+const OFFER_DRAFT_KEY = 'suvarna_admin_offer_form_draft';
 
 export default function AdminOffers() {
   const { offers, categories, addOffer, updateOffer, deleteOffer } = useAdmin();
@@ -18,6 +19,16 @@ export default function AdminOffers() {
   const [modalOpen, setModalOpen] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    try { const draft = JSON.parse(localStorage.getItem(OFFER_DRAFT_KEY) || 'null'); if (draft?.form) { setForm({ ...emptyForm, ...draft.form }); setModalOpen(true); setSaveError('Recovered an unsaved offer form from this browser.'); } }
+    catch (error) { console.error('Could not restore offer draft.', error); }
+  }, []);
+  useEffect(() => {
+    if (!modalOpen) return;
+    try { localStorage.setItem(OFFER_DRAFT_KEY, JSON.stringify({ form })); }
+    catch (error) { console.error('Could not preserve offer draft.', error); }
+  }, [form, modalOpen]);
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -28,6 +39,7 @@ export default function AdminOffers() {
     setSaving(false);
     if (!saved) { setSaveError('Offer was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'); return; }
     setSaveError('');
+    localStorage.removeItem(OFFER_DRAFT_KEY);
     setForm(emptyForm);
     setModalOpen(false);
   };

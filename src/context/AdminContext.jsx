@@ -1146,8 +1146,10 @@ export function AdminProvider({ children }) {
         setStore((s) => ({ ...s, enquiries: s.enquiries.filter((e) => e.id !== id) })),
 
       settings: store.settings,
-      updateSettings: (patch) =>
-        commitSharedMutation((s) => ({ ...s, settings: { ...s.settings, ...patch } })),
+      updateSettings: async (patch) => {
+        const saved = await commitSharedMutation((s) => ({ ...s, settings: { ...s.settings, ...patch } }));
+        return saved ? storeRef.current.settings : false;
+      },
 
       policies: store.policies,
       addPolicy: (id, policy) =>

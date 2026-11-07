@@ -74,7 +74,8 @@ export default function AdminSettings() {
       return;
     }
     setSavingSettings(true);
-    const result = await updateSettings(form);
+    const patch = Object.fromEntries(changedFields.map((key) => [key, form[key]]));
+    const result = await updateSettings(patch);
     setSavingSettings(false);
     if (!result) {
       setSaved(false);
@@ -82,7 +83,8 @@ export default function AdminSettings() {
       return;
     }
     setAdminFormDirty(false);
-    setEditBase(form);
+    setForm(result);
+    setEditBase(result);
     try {
       localStorage.removeItem(SETTINGS_FORM_DRAFT_KEY);
     } catch (error) {
