@@ -337,17 +337,57 @@ export function AdminProvider({ children }) {
     return savePromise;
   };
 
-  const updateOrderSyncBaseline = (order, revision) => {
-    const responseRevision = Number(revision);
-    if (Number.isSafeInteger(responseRevision) && responseRevision >= lastSharedRevisionRef.current) {
-      lastSharedRevisionRef.current = responseRevision;
-    }
-    if (!lastSharedDataRef.current) return;
+  const refreshSharedStoreSnapshot = async (minimumRevision) => {
+    try {
+      const { data, revision } = await apiRequest('admin-data');
+      const responseRevision = Number(revision);
+      if (
+        !data ||
+        !Number.isSafeInteger(responseRevision) ||
+        responseRevision < lastSharedRevisionRef.current ||
+        (minimumRevision != null && responseRevision < Number(minimumRevision))
+      ) {
+        throw new Error('The latest shared store snapshot could not be confirmed.');
+      }
 
-    const baseline = JSON.parse(lastSharedDataRef.current);
-    const orders = Array.isArray(baseline.orders) ? baseline.orders : [];
-    baseline.orders = [order, ...orders.filter((item) => item.id !== order.id)];
-    lastSharedDataRef.current = serializeSharedData(baseline);
+      if (!lastSharedDataRef.current) {
+        sharedStoreConflictRef.current = true;
+        setSharedStoreConflict(true);
+        setSharedStoreError('The shared store changed during an update. Reload the admin page before making more changes.');
+        return;
+      }
+
+      const baseline = JSON.parse(lastSharedDataRef.current);
+      const localData = getSharedData(storeRef.current);
+      const locallyChangedKeys = SHARED_DATA_KEYS.filter(
+        (key) => JSON.stringify(localData[key]) !== JSON.stringify(baseline[key])
+      );
+      const remotelyChangedKeys = SHARED_DATA_KEYS.filter(
+        (key) => JSON.stringify(data[key]) !== JSON.stringify(baseline[key])
+      );
+      const hasConflictingChanges = locallyChangedKeys.some((key) => remotelyChangedKeys.includes(key));
+
+      if (hasConflictingChanges) {
+        sharedStoreConflictRef.current = true;
+        setSharedStoreConflict(true);
+        setSharedStoreError('The shared store changed in another admin session while you had local edits. Your edits are still in this tab; reload only after recovering them.');
+        return;
+      }
+
+      const mergedData = {
+        ...data,
+        ...Object.fromEntries(locallyChangedKeys.map((key) => [key, localData[key]])),
+      };
+      lastSharedRevisionRef.current = responseRevision;
+      lastSharedDataRef.current = serializeSharedData(data);
+      sharedStoreConflictRef.current = false;
+      setSharedStoreConflict(false);
+      setSharedStoreError('');
+      setStore((current) => mergeSharedData(current, mergedData));
+    } catch (error) {
+      setSharedStoreError(error.message);
+      console.error('Could not refresh the shared admin data snapshot.', error);
+    }
   };
 
   const login = async (email, password) => {
@@ -419,6 +459,15 @@ export function AdminProvider({ children }) {
     }
   };
 
+  const refreshStorefrontData = async () => {
+    if (currentUserRef.current && sharedStoreReadyRef.current) {
+      return refreshSharedStoreSnapshot(lastSharedRevisionRef.current);
+    }
+    const { data } = await apiRequest('storefront-data');
+    if (data) setStore((current) => mergeSharedData(current, data));
+    return Boolean(data);
+  };
+
   useEffect(() => {
     if (!currentUser) return;
     let active = true;
@@ -478,8 +527,7 @@ export function AdminProvider({ children }) {
     let active = true;
     const refreshStorefront = async () => {
       try {
-        const { data } = await apiRequest('storefront-data');
-        if (active && data) setStore((current) => mergeSharedData(current, data));
+        if (active) await refreshStorefrontData();
       } catch (error) {
         if (active) console.error('Could not refresh shared storefront data.', error);
       }
@@ -768,6 +816,7 @@ export function AdminProvider({ children }) {
         setStore((s) => ({ ...s, videos: s.videos.filter((v) => v.id !== id) })),
 
       orders: store.orders,
+      refreshStorefrontData,
       addOrder: async (order) => {
         const nextOrder = {
           ...order,
@@ -782,7 +831,7 @@ export function AdminProvider({ children }) {
             body: nextOrder,
           });
           savedOrder = result.order;
-          if (currentUserRef.current) updateOrderSyncBaseline(savedOrder, result.revision);
+          if (currentUserRef.current) await refreshSharedStoreSnapshot(result.revision);
           if (result.duplicate) {
             setStore((s) => {
               const nextOrders = [savedOrder, ...s.orders.filter((item) => item.id !== savedOrder.id)];
@@ -795,7 +844,7 @@ export function AdminProvider({ children }) {
             return { ok: true, order: savedOrder, duplicate: true };
           }
         } catch (error) {
-          return { ok: false, error: error.message };
+          return { ok: false, error: error.message, status: error.status };
         }
 
         addSiteNotification({
@@ -839,7 +888,7 @@ export function AdminProvider({ children }) {
             body: { id, status },
           });
           updatedOrder = result.order;
-          if (currentUserRef.current) updateOrderSyncBaseline(updatedOrder, result.revision);
+          if (currentUserRef.current) await refreshSharedStoreSnapshot(result.revision);
         } catch (error) {
           return { ok: false, error: error.message };
         }

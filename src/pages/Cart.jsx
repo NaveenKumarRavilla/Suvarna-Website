@@ -5,7 +5,18 @@ import { formatPrice, handleImgError } from '../utils/helpers';
 import Button from '../components/common/Button';
 
 export default function Cart() {
-  const { items, updateQty, removeItem, subtotal, savings, delivery, total } = useCart();
+  const {
+    items,
+    updateQty,
+    removeItem,
+    acknowledgePriceChanges,
+    subtotal,
+    savings,
+    delivery,
+    total,
+  } = useCart();
+  const hasUnreviewedPriceChanges = items.some((item) => item.priceChanged);
+  const hasUnavailableItems = items.some((item) => item.unavailable);
 
   if (!items.length) {
     return (
@@ -33,6 +44,27 @@ export default function Cart() {
           ({items.length} item{items.length === 1 ? '' : 's'})
         </span>
       </h1>
+
+      {hasUnreviewedPriceChanges && (
+        <div role="status" className="mb-5 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+          <p className="font-semibold">Some prices changed. Review the updated prices before checkout.</p>
+          <ul className="mt-2 space-y-1">
+            {items.filter((item) => item.priceChanged).map((item) => (
+              <li key={item.id}>
+                {item.name}: {formatPrice(item.previousPrice)} → {formatPrice(item.price)}
+              </li>
+            ))}
+          </ul>
+          <Button type="button" variant="outline" size="sm" className="mt-3" onClick={acknowledgePriceChanges}>
+            I have reviewed the updated prices
+          </Button>
+        </div>
+      )}
+      {hasUnavailableItems && (
+        <div role="alert" className="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          One or more products are no longer available. Remove them from your cart to continue.
+        </div>
+      )}
 
       <div className="grid gap-8 lg:grid-cols-[1fr_360px]">
         {/* Items */}
@@ -70,6 +102,7 @@ export default function Cart() {
                     </span>
                   )}
                 </div>
+                {item.unavailable && <p className="mt-2 text-xs font-semibold text-red-600">Currently unavailable</p>}
               </div>
               <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-end">
                 <div className="flex items-center rounded-lg border border-slate-200">
@@ -152,9 +185,15 @@ export default function Cart() {
             Prices include GST. Secure checkout.
           </p>
           <div className="mt-5 space-y-2.5">
-            <Button to="/checkout" variant="accent" size="lg" className="w-full">
-              Proceed to Checkout
-            </Button>
+            {hasUnreviewedPriceChanges || hasUnavailableItems ? (
+              <Button type="button" variant="accent" size="lg" className="w-full" disabled>
+                {hasUnavailableItems ? 'Remove unavailable products' : 'Review updated prices to continue'}
+              </Button>
+            ) : (
+              <Button to="/checkout" variant="accent" size="lg" className="w-full">
+                Proceed to Checkout
+              </Button>
+            )}
             <Button to="/products" variant="outline" size="md" className="w-full">
               Continue Shopping
             </Button>

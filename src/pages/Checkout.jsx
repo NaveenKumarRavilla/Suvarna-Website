@@ -63,8 +63,16 @@ function PriceDetails({ subtotal, savings, delivery, total, action }) {
 
 export default function Checkout() {
   const navigate = useNavigate();
-  const { items, subtotal, savings, delivery, total, clearCart } = useCart();
-  const { addOrder } = useAdmin();
+  const {
+    items,
+    subtotal,
+    savings,
+    delivery,
+    total,
+    clearCart,
+    acknowledgePriceChanges,
+  } = useCart();
+  const { addOrder, refreshStorefrontData } = useAdmin();
   const { user, isLoggedIn, updateProfile } = useAuth();
   const initialAddresses = savedFor(user);
   const [page, setPage] = useState('summary');
@@ -81,6 +89,8 @@ export default function Checkout() {
   const [placingOrder, setPlacingOrder] = useState(false);
   const placingOrderRef = useRef(false);
   const orderRequestRef = useRef({ fingerprint: '', key: '' });
+  const hasUnreviewedPriceChanges = items.some((item) => item.priceChanged);
+  const hasUnavailableItems = items.some((item) => item.unavailable);
   const selectedPayment = paymentMethods.find((method) => method.id === payment);
   const PaymentIcon = selectedPayment.icon;
   const activeAddress = addresses.find((item) => item.id === selectedId);
@@ -105,6 +115,14 @@ export default function Checkout() {
     setAddressPanel(false);
   };
   const placeOrder = async () => {
+    if (hasUnreviewedPriceChanges) {
+      setCustomerError('Review the updated product prices before placing your order.');
+      return;
+    }
+    if (hasUnavailableItems) {
+      setCustomerError('Remove unavailable products from your cart before placing your order.');
+      return;
+    }
     if (placingOrderRef.current) return;
     placingOrderRef.current = true;
     setPlacingOrder(true);
@@ -155,6 +173,13 @@ export default function Checkout() {
       const idempotencyKey = orderRequestRef.current.key;
       const result = await addOrder({ ...order, idempotencyKey });
       if (!result.ok) {
+        if (result.status === 409) {
+          try {
+            await refreshStorefrontData();
+          } catch (error) {
+            console.error('Could not refresh product prices after checkout validation failed.', error);
+          }
+        }
         setCustomerError(result.error);
         return;
       }
@@ -177,8 +202,10 @@ export default function Checkout() {
 
   return <main className="min-h-screen bg-slate-100 pb-8"><div className="mx-auto max-w-7xl px-3 sm:px-5"><div className="flex items-center justify-between border-b border-slate-200 bg-white px-3 sm:px-5"><button type="button" onClick={() => navigate('/cart')} className="flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-secondary"><ArrowLeft size={15} /> Cart</button><Progress page={page} /><span className="hidden items-center gap-1 text-xs font-semibold text-slate-500 sm:flex"><LockKeyhole size={14} /> Secure checkout</span></div>
     {customerError && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{customerError}</p>}
+    {hasUnreviewedPriceChanges && <div role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950"><p className="font-semibold">Product prices changed. Review these updated prices before placing your order:</p><ul className="mt-2 space-y-1">{items.filter((item) => item.priceChanged).map((item) => <li key={item.id}>{item.name}: {formatPrice(item.previousPrice)} → {formatPrice(item.price)}</li>)}</ul><Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => { acknowledgePriceChanges(); setCustomerError(''); }}>I have reviewed the updated prices</Button></div>}
+    {hasUnavailableItems && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">One or more products are no longer available. Remove them from your cart before continuing.</p>}
     {page === 'summary' && <div className="grid gap-4 pt-3 min-[480px]:grid-cols-[minmax(0,1fr)_260px]"><section className="space-y-3"><div className="bg-white px-4 py-4 shadow-sm sm:px-5"><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-bold text-primary">Deliver to:</p><p className="mt-2 text-sm font-semibold text-primary">{contact.name || 'Add your delivery address'}</p><p className="mt-1 max-w-3xl text-sm leading-6 text-slate-700">{address.address ? <>{address.address}, {address.city} {address.pin}</> : 'Select or add an address to continue.'}</p><p className="mt-1 text-sm text-slate-700">{contact.phone}</p></div><button type="button" onClick={() => setAddressPanel(true)} className="shrink-0 rounded border border-slate-200 px-4 py-2 text-xs font-semibold text-secondary hover:border-secondary">{address.address ? 'Change' : 'Add address'}</button></div></div><div className="bg-white shadow-sm"><div className="max-h-[360px] divide-y divide-slate-100 overflow-y-auto">{items.map((item) => <article key={item.id} className="flex gap-4 px-4 py-4 sm:px-5"><img src={item.image} alt="" className="h-20 w-20 shrink-0 object-contain" /><div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold text-primary sm:text-base">{item.name}</h2><p className="mt-1 text-xs text-slate-500">{item.brand} · Qty: {item.qty}</p><p className="mt-3 text-sm font-bold text-primary">{formatPrice(item.price * item.qty)} <span className="ml-1 text-xs font-medium text-slate-400 line-through">{item.oldPrice ? formatPrice(item.oldPrice * item.qty) : ''}</span></p><p className="mt-3 text-xs text-secondary">Delivery will be confirmed after your order.</p></div></article>)}</div></div></section><div className="space-y-3 min-[480px]:sticky min-[480px]:top-3 min-[480px]:h-fit"><PriceDetails subtotal={subtotal} savings={savings} delivery={delivery} total={total} action={<Button type="button" variant="accent" className="w-full justify-center" onClick={() => address.address ? setPage('payment') : setAddressPanel(true)}>Continue</Button>} /><p className="px-2 text-xs leading-relaxed text-slate-500">By continuing, you agree to Suvarna IT Enterprises’ terms and privacy policy.</p></div></div>}
-    {page === 'payment' && <div className="checkout-payment-layout grid gap-4 pt-3"><aside className="bg-white p-3 shadow-sm sm:p-4"><h2 className="mb-3 px-1 text-sm font-bold text-primary">Payment method</h2><div className="space-y-2">{paymentMethods.map(({ id, label, note, icon: Icon }) => <button key={id} type="button" disabled={id !== 'cod'} aria-pressed={payment === id} onClick={() => setPayment(id)} className={`flex min-h-[68px] w-full items-center gap-3 rounded-md border p-3 text-left transition ${id === 'cod' ? 'border-secondary bg-secondary/5 ring-1 ring-secondary' : 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-50'}`}><Icon size={20} className="shrink-0 text-primary" /><span className="min-w-0"><b className="block text-sm leading-5 text-primary">{label}</b><small className="mt-0.5 block text-xs leading-4 text-slate-500">{note}</small></span></button>)}</div></aside><section className="min-h-[360px] bg-white p-5 shadow-sm sm:p-6"><div className="mx-auto max-w-lg"><div className="flex h-11 w-11 items-center justify-center rounded-md bg-secondary/10 text-secondary"><PaymentIcon size={22} /></div><h2 className="mt-4 text-lg font-bold text-primary">Cash on Delivery</h2><p className="mt-1 text-sm text-slate-500">Pay at the time of delivery.</p><div className="mt-6 rounded-md border border-slate-200 p-4 text-sm leading-6 text-slate-600"><p className="font-semibold text-primary">Cash payment</p><p className="mt-1">Pay {formatPrice(total)} in cash when your order arrives at the delivery address.</p><p className="mt-2 text-xs text-slate-500">Please keep the amount ready. Delivery fees are included in the total.</p></div></div></section><div className="checkout-payment-price"><PriceDetails subtotal={subtotal} savings={savings} delivery={delivery} total={total} action={<div className="space-y-2"><Button type="button" variant="accent" className="w-full justify-center" onClick={placeOrder} disabled={placingOrder}>{placingOrder ? 'Placing Order…' : 'Place Order'}</Button><Button type="button" variant="outline" className="w-full justify-center" onClick={() => setPage('summary')}>Order Summary</Button></div>} /></div></div>}
+    {page === 'payment' && <div className="checkout-payment-layout grid gap-4 pt-3"><aside className="bg-white p-3 shadow-sm sm:p-4"><h2 className="mb-3 px-1 text-sm font-bold text-primary">Payment method</h2><div className="space-y-2">{paymentMethods.map(({ id, label, note, icon: Icon }) => <button key={id} type="button" disabled={id !== 'cod'} aria-pressed={payment === id} onClick={() => setPayment(id)} className={`flex min-h-[68px] w-full items-center gap-3 rounded-md border p-3 text-left transition ${id === 'cod' ? 'border-secondary bg-secondary/5 ring-1 ring-secondary' : 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-50'}`}><Icon size={20} className="shrink-0 text-primary" /><span className="min-w-0"><b className="block text-sm leading-5 text-primary">{label}</b><small className="mt-0.5 block text-xs leading-4 text-slate-500">{note}</small></span></button>)}</div></aside><section className="min-h-[360px] bg-white p-5 shadow-sm sm:p-6"><div className="mx-auto max-w-lg"><div className="flex h-11 w-11 items-center justify-center rounded-md bg-secondary/10 text-secondary"><PaymentIcon size={22} /></div><h2 className="mt-4 text-lg font-bold text-primary">Cash on Delivery</h2><p className="mt-1 text-sm text-slate-500">Pay at the time of delivery.</p><div className="mt-6 rounded-md border border-slate-200 p-4 text-sm leading-6 text-slate-600"><p className="font-semibold text-primary">Cash payment</p><p className="mt-1">Pay {formatPrice(total)} in cash when your order arrives at the delivery address.</p><p className="mt-2 text-xs text-slate-500">Please keep the amount ready. Delivery fees are included in the total.</p></div></div></section><div className="checkout-payment-price"><PriceDetails subtotal={subtotal} savings={savings} delivery={delivery} total={total} action={<div className="space-y-2"><Button type="button" variant="accent" className="w-full justify-center" onClick={placeOrder} disabled={placingOrder || hasUnreviewedPriceChanges || hasUnavailableItems}>{placingOrder ? 'Placing Order…' : 'Place Order'}</Button><Button type="button" variant="outline" className="w-full justify-center" onClick={() => setPage('summary')}>Order Summary</Button></div>} /></div></div>}
   </div>
   {addressPanel && (
     <div className="fixed inset-0 z-50 flex justify-end bg-primary/60">
