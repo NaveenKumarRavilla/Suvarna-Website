@@ -297,8 +297,11 @@ export function AdminProvider({ children }) {
           const body = { data: next, revision: lastSharedRevisionRef.current };
           const keepalive = new Blob([JSON.stringify(body)]).size < 60 * 1024;
           const result = await apiRequest('admin-data', { method: 'PUT', body, keepalive });
-          lastSharedRevisionRef.current = Number(result.revision) || lastSharedRevisionRef.current + 1;
-          lastSharedDataRef.current = serializeSharedData(next);
+          const responseRevision = Number(result.revision);
+          if (Number.isSafeInteger(responseRevision) && responseRevision >= lastSharedRevisionRef.current) {
+            lastSharedRevisionRef.current = responseRevision;
+            lastSharedDataRef.current = serializeSharedData(next);
+          }
         }
         setSharedStoreError('');
         setSharedStoreConflict(false);
@@ -332,6 +335,19 @@ export function AdminProvider({ children }) {
     })();
     savePromiseRef.current = savePromise;
     return savePromise;
+  };
+
+  const updateOrderSyncBaseline = (order, revision) => {
+    const responseRevision = Number(revision);
+    if (Number.isSafeInteger(responseRevision) && responseRevision >= lastSharedRevisionRef.current) {
+      lastSharedRevisionRef.current = responseRevision;
+    }
+    if (!lastSharedDataRef.current) return;
+
+    const baseline = JSON.parse(lastSharedDataRef.current);
+    const orders = Array.isArray(baseline.orders) ? baseline.orders : [];
+    baseline.orders = [order, ...orders.filter((item) => item.id !== order.id)];
+    lastSharedDataRef.current = serializeSharedData(baseline);
   };
 
   const login = async (email, password) => {
@@ -491,11 +507,13 @@ export function AdminProvider({ children }) {
       try {
         const { data, revision = 0 } = await apiRequest('admin-data');
         if (!active || !data) return;
+        const responseRevision = Number(revision);
+        if (!Number.isSafeInteger(responseRevision) || responseRevision < lastSharedRevisionRef.current) return;
         if (!sharedStoreConflictRef.current) setSharedStoreError('');
         const remoteSerialized = serializeSharedData(data);
         const localSerialized = serializeSharedData(getSharedData(storeRef.current));
         if (remoteSerialized === localSerialized) {
-          lastSharedRevisionRef.current = Number(revision) || lastSharedRevisionRef.current;
+          lastSharedRevisionRef.current = responseRevision;
           lastSharedDataRef.current = remoteSerialized;
           if (sharedStoreConflictRef.current) {
             sharedStoreConflictRef.current = false;
@@ -503,9 +521,13 @@ export function AdminProvider({ children }) {
             setSharedStoreError('');
           }
         } else if (localSerialized === lastSharedDataRef.current) {
-          lastSharedRevisionRef.current = Number(revision) || lastSharedRevisionRef.current;
+          lastSharedRevisionRef.current = responseRevision;
           lastSharedDataRef.current = remoteSerialized;
           setStore((current) => mergeSharedData(current, data));
+        } else if (responseRevision > lastSharedRevisionRef.current) {
+          sharedStoreConflictRef.current = true;
+          setSharedStoreConflict(true);
+          setSharedStoreError('The shared store changed in another admin session. Your edits are still in this tab; do not refresh or close it before recovering them.');
         }
       } catch (error) {
         if (active && error.status !== 401) {
@@ -537,6 +559,7 @@ export function AdminProvider({ children }) {
   useEffect(() => {
     const syncStore = (event) => {
       if (event.key !== STORAGE_KEY && event.key !== null) return;
+      if (currentUserRef.current) return;
       setStore(loadStore());
     };
 
@@ -759,6 +782,18 @@ export function AdminProvider({ children }) {
             body: nextOrder,
           });
           savedOrder = result.order;
+          if (currentUserRef.current) updateOrderSyncBaseline(savedOrder, result.revision);
+          if (result.duplicate) {
+            setStore((s) => {
+              const nextOrders = [savedOrder, ...s.orders.filter((item) => item.id !== savedOrder.id)];
+              return {
+                ...s,
+                orders: nextOrders,
+                customers: syncCustomerOrderCounts(s.customers, nextOrders),
+              };
+            });
+            return { ok: true, order: savedOrder, duplicate: true };
+          }
         } catch (error) {
           return { ok: false, error: error.message };
         }
@@ -804,6 +839,7 @@ export function AdminProvider({ children }) {
             body: { id, status },
           });
           updatedOrder = result.order;
+          if (currentUserRef.current) updateOrderSyncBaseline(updatedOrder, result.revision);
         } catch (error) {
           return { ok: false, error: error.message };
         }

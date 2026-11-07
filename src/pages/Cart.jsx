@@ -86,9 +86,10 @@ export default function Cart() {
                   </span>
                   <button
                     type="button"
+                    disabled={item.qty >= 10}
                     onClick={() => updateQty(item.id, item.qty + 1)}
                     aria-label={`Increase quantity of ${item.name}`}
-                    className="p-2 text-slate-600 transition hover:text-secondary"
+                    className="p-2 text-slate-600 transition hover:text-secondary disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Plus size={14} />
                   </button>

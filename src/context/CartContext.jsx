@@ -3,11 +3,22 @@ import { createContext, useContext, useEffect, useMemo, useReducer } from 'react
 const CartContext = createContext(null);
 
 const STORAGE_KEY = 'suvarna_cart';
+const MAX_CART_ITEM_QUANTITY = 10;
+
+const normalizeQuantity = (quantity) =>
+  Math.max(0, Math.min(MAX_CART_ITEM_QUANTITY, Math.floor(Number(quantity) || 0)));
 
 const initialState = () => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : { items: [] };
+    if (!saved) return { items: [] };
+    const parsed = JSON.parse(saved);
+    if (!Array.isArray(parsed.items)) return { items: [] };
+    return {
+      items: parsed.items
+        .map((item) => ({ ...item, qty: normalizeQuantity(item.qty) }))
+        .filter((item) => item.qty > 0),
+    };
   } catch {
     return { items: [] };
   }
@@ -17,12 +28,14 @@ function cartReducer(state, action) {
   switch (action.type) {
     case 'ADD_ITEM': {
       const { product, qty = 1 } = action;
+      const quantity = normalizeQuantity(qty);
+      if (!quantity) return state;
       const existing = state.items.find((i) => i.id === product.id);
       if (existing) {
         return {
           ...state,
           items: state.items.map((i) =>
-            i.id === product.id ? { ...i, qty: i.qty + qty } : i
+            i.id === product.id ? { ...i, qty: normalizeQuantity(i.qty + quantity) } : i
           ),
         };
       }
@@ -37,7 +50,7 @@ function cartReducer(state, action) {
             price: product.price,
             oldPrice: product.oldPrice,
             image: product.images?.[0] || product.image,
-            qty,
+            qty: quantity,
           },
         ],
       };
@@ -52,7 +65,7 @@ function cartReducer(state, action) {
         ...state,
         items: state.items
           .map((i) =>
-            i.id === action.id ? { ...i, qty: Math.max(0, action.qty) } : i
+            i.id === action.id ? { ...i, qty: normalizeQuantity(action.qty) } : i
           )
           .filter((i) => i.qty > 0),
       };

@@ -5,6 +5,14 @@ ob_start();
 
 const MAX_SHARED_STORE_BYTES = 8_000_000;
 
+final class ApiException extends RuntimeException
+{
+    public function __construct(public readonly int $status, string $message)
+    {
+        parent::__construct($message);
+    }
+}
+
 $configPath = __DIR__ . '/config.php';
 if (!is_file($configPath)) {
     respond(503, ['error' => 'Hostinger API is not configured. Add public/api/config.php using config.example.php.']);
@@ -616,29 +624,12 @@ try {
         case 'order-create':
             requireMethod('POST');
             $input = readJson();
-            $items = $input['items'] ?? null;
-            $total = $input['total'] ?? null;
-            if (!is_array($items) || count($items) < 1 || count($items) > 100 || !is_numeric($total) || (float) $total < 0) {
-                respond(422, ['error' => 'Order details are invalid. Please review your cart and try again.']);
-            }
-            $email = normalizeEmail($input['email'] ?? '');
-            if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                respond(422, ['error' => 'Enter a valid contact email address.']);
-            }
-            $record = [
-                'id' => 'SIE' . date('ymdHis') . strtoupper(bin2hex(random_bytes(3))),
-                'customer' => cleanText($input['customer'] ?? '', 160) ?: 'Guest',
-                'phone' => cleanText($input['phone'] ?? '', 40),
-                'email' => $email,
-                'items' => array_map('normalizeOrderItem', $items),
-                'total' => round((float) $total, 2),
-                'payment' => 'cod',
-                'shippingAddress' => normalizeAddress($input['shippingAddress'] ?? []),
-                'date' => date('Y-m-d'),
-                'status' => 'Pending',
-            ];
-            appendSharedRecord($pdo, 'orders', $record);
-            respond(201, ['order' => $record]);
+            $result = createOrderIdempotently($pdo, $input);
+            respond($result['duplicate'] ? 200 : 201, [
+                'order' => $result['order'],
+                'duplicate' => $result['duplicate'],
+                'revision' => $result['revision'],
+            ]);
 
         case 'admin-order-status':
             requireMethod('POST');
@@ -649,9 +640,9 @@ try {
             if ($orderId === '' || !in_array($status, ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'], true)) {
                 respond(422, ['error' => 'Order ID or status is invalid.']);
             }
-            $updatedOrder = updateSharedOrderStatus($pdo, $orderId, $status);
-            if (!$updatedOrder) respond(404, ['error' => 'Order not found.']);
-            respond(200, ['order' => $updatedOrder]);
+            $result = updateSharedOrderStatus($pdo, $orderId, $status);
+            if (!$result) respond(404, ['error' => 'Order not found.']);
+            respond(200, ['order' => $result['order'], 'revision' => $result['revision']]);
 
         case 'enquiry-create':
             requireMethod('POST');
@@ -689,6 +680,8 @@ try {
         default:
             respond(404, ['error' => 'Unknown API action.']);
     }
+} catch (ApiException $error) {
+    respond($error->status, ['error' => $error->getMessage()]);
 } catch (Throwable $error) {
     error_log('Suvarna API error: ' . $error->getMessage());
     respond(500, ['error' => 'The server could not complete this request. Check the Hostinger PHP error log.']);
@@ -846,6 +839,173 @@ function normalizeStoreData(mixed $data): array
     return $normalized;
 }
 
+function createOrderIdempotently(PDO $pdo, array $input): array
+{
+    $idempotencyKey = cleanText($input['idempotencyKey'] ?? '', 100);
+    if (!preg_match('/^[A-Za-z0-9._:-]{16,100}$/D', $idempotencyKey)) {
+        throw new ApiException(422, 'The checkout request is missing a valid retry key. Refresh checkout and try again.');
+    }
+
+    $items = $input['items'] ?? null;
+    $total = $input['total'] ?? null;
+    if (!is_array($items) || count($items) < 1 || count($items) > 100 || !is_numeric($total) || !is_finite((float) $total) || (float) $total < 0) {
+        throw new ApiException(422, 'Order details are invalid. Please review your cart and try again.');
+    }
+
+    $email = normalizeEmail($input['email'] ?? '');
+    if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        throw new ApiException(422, 'Enter a valid contact email address.');
+    }
+    $payment = strtolower(cleanText($input['payment'] ?? '', 20));
+    if ($payment !== 'cod') {
+        throw new ApiException(422, 'The selected payment method is not available.');
+    }
+
+    $customer = cleanText($input['customer'] ?? '', 160) ?: 'Guest';
+    $phone = cleanText($input['phone'] ?? '', 40);
+    $shippingAddress = normalizeAddress($input['shippingAddress'] ?? []);
+    $requestedItems = [];
+    $seenProductIds = [];
+
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            throw new ApiException(422, 'Order contains an invalid product.');
+        }
+        $productId = cleanText($item['id'] ?? '', 80);
+        $quantity = $item['qty'] ?? null;
+        $clientPrice = $item['price'] ?? null;
+        if ($productId === '' || !is_int($quantity) || $quantity < 1 || $quantity > 10 || !is_numeric($clientPrice) || !is_finite((float) $clientPrice) || (float) $clientPrice <= 0) {
+            throw new ApiException(422, 'A product quantity or price is invalid. Review your cart and try again.');
+        }
+        if (isset($seenProductIds[$productId])) {
+            throw new ApiException(422, 'The cart contains the same product more than once. Review your cart and try again.');
+        }
+        $seenProductIds[$productId] = true;
+        $requestedItems[] = [
+            'id' => $productId,
+            'qty' => $quantity,
+            'pricePaise' => (int) round((float) $clientPrice * 100),
+        ];
+    }
+
+    $clientTotalPaise = (int) round((float) $total * 100);
+    $requestFingerprint = json_encode([
+        'customer' => $customer,
+        'phone' => $phone,
+        'email' => $email,
+        'items' => $requestedItems,
+        'totalPaise' => $clientTotalPaise,
+        'payment' => 'cod',
+        'shippingAddress' => $shippingAddress,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($requestFingerprint === false) {
+        throw new ApiException(422, 'Order details could not be validated. Please review your checkout information.');
+    }
+    $requestHash = hash('sha256', $requestFingerprint);
+
+    $pdo->beginTransaction();
+    try {
+        $statement = $pdo->prepare('SELECT store_data, revision FROM shared_store WHERE store_key = ? FOR UPDATE');
+        $statement->execute(['main']);
+        $shared = $statement->fetch();
+        if (!$shared) {
+            throw new ApiException(503, 'Store setup is not complete. Please try again later.');
+        }
+        $data = json_decode($shared['store_data'], true);
+        if (!is_array($data) || !is_array($data['orders'] ?? null) || !is_array($data['products'] ?? null)) {
+            throw new RuntimeException('Shared store is missing the products or orders collection.');
+        }
+
+        foreach ($data['orders'] as $existingOrder) {
+            if (!is_array($existingOrder) || !hash_equals((string) ($existingOrder['idempotencyKey'] ?? ''), $idempotencyKey)) {
+                continue;
+            }
+            if (!hash_equals((string) ($existingOrder['idempotencyHash'] ?? ''), $requestHash)) {
+                throw new ApiException(409, 'This checkout retry key was already used for different order details. Review your cart and retry.');
+            }
+            $pdo->commit();
+            return ['order' => $existingOrder, 'duplicate' => true, 'revision' => (int) $shared['revision']];
+        }
+
+        $normalizedItems = [];
+        $subtotalPaise = 0;
+        foreach ($requestedItems as $requestedItem) {
+            $product = null;
+            foreach ($data['products'] as $candidate) {
+                if (is_array($candidate) && (string) ($candidate['id'] ?? '') === $requestedItem['id']) {
+                    $product = $candidate;
+                    break;
+                }
+            }
+            if (!$product || !isPublishableProduct($product)) {
+                throw new ApiException(409, 'A product in your cart is no longer available. Remove it and review your cart.');
+            }
+
+            $stock = cleanText($product['stock'] ?? '', 40);
+            if (!in_array(strtolower($stock), ['in stock', 'limited stock'], true)) {
+                throw new ApiException(409, '"' . cleanText($product['name'] ?? 'A product', 160) . '" is out of stock. Remove it or contact us for availability.');
+            }
+            $catalogPrice = $product['price'] ?? null;
+            if (!is_numeric($catalogPrice) || !is_finite((float) $catalogPrice) || (float) $catalogPrice <= 0) {
+                throw new RuntimeException('A published product has an invalid price.');
+            }
+            $pricePaise = (int) round((float) $catalogPrice * 100);
+            if ($requestedItem['pricePaise'] !== $pricePaise) {
+                throw new ApiException(409, 'A product price changed while you were checking out. Review your cart and try again.');
+            }
+
+            $subtotalPaise += $pricePaise * $requestedItem['qty'];
+            $images = $product['images'] ?? [];
+            $image = $product['image'] ?? (is_array($images) ? ($images[0] ?? '') : '');
+            $oldPrice = $product['oldPrice'] ?? $catalogPrice;
+            $normalizedItems[] = [
+                'id' => $requestedItem['id'],
+                'name' => cleanText($product['name'] ?? 'Product', 200),
+                'qty' => $requestedItem['qty'],
+                'price' => round($pricePaise / 100, 2),
+                'brand' => cleanText($product['brand'] ?? '', 100),
+                'category' => cleanText($product['category'] ?? '', 100),
+                'image' => cleanText($image, 500000),
+                'oldPrice' => is_numeric($oldPrice) ? max(0, round((float) $oldPrice, 2)) : round($pricePaise / 100, 2),
+                'stock' => $stock,
+            ];
+        }
+
+        $deliveryPaise = $subtotalPaise > 0 && $subtotalPaise < 5_000_000 ? 49_900 : 0;
+        $expectedTotalPaise = $subtotalPaise + $deliveryPaise;
+        if ($clientTotalPaise !== $expectedTotalPaise) {
+            throw new ApiException(409, 'Your order total changed. Review the updated prices and delivery fee before placing the order.');
+        }
+
+        $record = [
+            'id' => 'SIE' . date('ymdHis') . strtoupper(bin2hex(random_bytes(3))),
+            'customer' => $customer,
+            'phone' => $phone,
+            'email' => $email,
+            'items' => $normalizedItems,
+            'total' => round($expectedTotalPaise / 100, 2),
+            'payment' => 'cod',
+            'shippingAddress' => $shippingAddress,
+            'date' => date('Y-m-d'),
+            'status' => 'Pending',
+            'idempotencyKey' => $idempotencyKey,
+            'idempotencyHash' => $requestHash,
+        ];
+        array_unshift($data['orders'], $record);
+        $updated = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($updated === false || strlen($updated) > MAX_SHARED_STORE_BYTES) {
+            throw new ApiException(413, 'Store data is too large to save this order. Please contact us.');
+        }
+        $statement = $pdo->prepare('UPDATE shared_store SET store_data = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE store_key = ?');
+        $statement->execute([$updated, 'main']);
+        $pdo->commit();
+        return ['order' => $record, 'duplicate' => false, 'revision' => (int) $shared['revision'] + 1];
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $error;
+    }
+}
+
 function appendSharedRecord(PDO $pdo, string $collection, array $record): void
 {
     $pdo->beginTransaction();
@@ -880,14 +1040,14 @@ function updateSharedOrderStatus(PDO $pdo, string $orderId, string $status): arr
 {
     $pdo->beginTransaction();
     try {
-        $statement = $pdo->prepare('SELECT store_data FROM shared_store WHERE store_key = ? FOR UPDATE');
+        $statement = $pdo->prepare('SELECT store_data, revision FROM shared_store WHERE store_key = ? FOR UPDATE');
         $statement->execute(['main']);
-        $serialized = $statement->fetchColumn();
-        if ($serialized === false) {
+        $shared = $statement->fetch();
+        if (!$shared) {
             $pdo->rollBack();
             return false;
         }
-        $data = json_decode($serialized, true);
+        $data = json_decode($shared['store_data'], true);
         if (!is_array($data) || !is_array($data['orders'] ?? null)) {
             throw new RuntimeException('Shared store is missing the orders collection.');
         }
@@ -912,27 +1072,11 @@ function updateSharedOrderStatus(PDO $pdo, string $orderId, string $status): arr
         $statement = $pdo->prepare('UPDATE shared_store SET store_data = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE store_key = ?');
         $statement->execute([$updated, 'main']);
         $pdo->commit();
-        return $updatedOrder;
+        return ['order' => $updatedOrder, 'revision' => (int) $shared['revision'] + 1];
     } catch (Throwable $error) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         throw $error;
     }
-}
-
-function normalizeOrderItem(mixed $item): array
-{
-    if (!is_array($item)) respond(422, ['error' => 'Order contains an invalid product.']);
-    return [
-        'id' => cleanText($item['id'] ?? '', 80),
-        'name' => cleanText($item['name'] ?? 'Product', 200),
-        'qty' => max(1, min(999, (int) ($item['qty'] ?? 1))),
-        'price' => max(0, (float) ($item['price'] ?? 0)),
-        'brand' => cleanText($item['brand'] ?? '', 100),
-        'category' => cleanText($item['category'] ?? '', 100),
-        'image' => cleanText($item['image'] ?? '', 500000),
-        'oldPrice' => max(0, (float) ($item['oldPrice'] ?? 0)),
-        'stock' => max(0, (int) ($item['stock'] ?? 0)),
-    ];
 }
 
 function normalizeAddress(mixed $address): array
