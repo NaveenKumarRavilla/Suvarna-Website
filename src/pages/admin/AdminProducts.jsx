@@ -138,6 +138,12 @@ const warrantyFormValues = (warranty = '') => {
   return { warrantyDuration: match[1], warrantyUnit: match[2].toLowerCase().startsWith('month') ? 'Month' : 'Year', warrantyKind: /standard/i.test(match[3]) ? 'Standard Warranty' : 'Brand Warranty' };
 };
 const PRODUCT_FORM_DRAFT_KEY = 'suvarna_admin_product_form_draft';
+const createPendingProductId = () => {
+  const cryptoApi = globalThis.crypto;
+  if (!cryptoApi?.getRandomValues) throw new Error('Secure product ID generation is unavailable in this browser.');
+  const suffix = cryptoApi.randomUUID ? cryptoApi.randomUUID() : [...cryptoApi.getRandomValues(new Uint8Array(16))].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `PRD-${suffix}`;
+};
 
 export default function AdminProducts() {
   const { products, categories, saveProductBatch, updateProduct, deleteProduct, setAdminFormDirty } = useAdmin();
@@ -145,6 +151,7 @@ export default function AdminProducts() {
   const navigate = useNavigate();
   const [editing, setEditing] = useState(null);
   const [editBase, setEditBase] = useState(null);
+  const [pendingCreateId, setPendingCreateId] = useState(null);
   const [formMode, setFormMode] = useState('add');
   const [form, setForm] = useState(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
@@ -183,12 +190,13 @@ export default function AdminProducts() {
   });
   const hiddenFromStorefrontCount = products.filter((product) => !isPublishableProduct(product)).length;
 
-  const openAdd = () => { setEditing(null); setEditBase(null); setFormMode('add'); setForm(emptyForm()); setFormError(''); setAdminFormDirty(true); setFormOpen(true); };
+  const openAdd = () => { setEditing(null); setEditBase(null); setPendingCreateId(null); setFormMode('add'); setForm(emptyForm()); setFormError(''); setAdminFormDirty(true); setFormOpen(true); };
   const openEdit = (product, clone = false) => {
     const productImages = Array.isArray(product.images) && product.images.length ? product.images : product.image ? [product.image] : [];
     const configuration = Object.entries(product.specs || {}).map(([key, value]) => ({ key, value: String(value || '') }));
     setEditing(clone ? null : product);
     setEditBase(clone ? null : JSON.stringify(product));
+    setPendingCreateId(null);
     setFormMode(clone ? 'clone' : 'edit');
     setFormError('');
     setAdminFormDirty(true);
@@ -221,6 +229,7 @@ export default function AdminProducts() {
       const isEditing = draft.mode === 'edit' && !!existing;
       setEditing(isEditing ? existing : null);
       setEditBase(isEditing ? (draft.baseRecord || JSON.stringify(existing)) : null);
+      setPendingCreateId(draft.pendingCreateId || null);
       setFormMode(isEditing ? 'edit' : draft.mode === 'clone' ? 'clone' : 'add');
       setForm({ ...emptyForm(), ...draft.form });
       setFormError('Recovered an unsaved product form from this browser.');
@@ -239,11 +248,12 @@ export default function AdminProducts() {
         editingId: editing?.id ?? null,
         mode: formMode,
         baseRecord: editBase,
+        pendingCreateId,
       }));
     } catch (error) {
       console.error('Could not preserve the product form draft.', error);
     }
-  }, [editBase, editing, form, formMode, formOpen]);
+  }, [editBase, editing, form, formMode, formOpen, pendingCreateId]);
 
   useEffect(() => () => setAdminFormDirty(false), [setAdminFormDirty]);
 
@@ -251,6 +261,7 @@ export default function AdminProducts() {
     if (!saved && !window.confirm('Discard this product form?')) return;
     setEditing(null);
     setEditBase(null);
+    setPendingCreateId(null);
     setFormMode('add');
     setFormOpen(false);
     setAdminFormDirty(false);
@@ -298,7 +309,9 @@ export default function AdminProducts() {
     };
     setSavingProduct(true);
     try {
-      const saved = await saveProductBatch([{ ...(editing ? { id: editing.id } : {}), product: payload }]);
+      const operationId = editing?.id || pendingCreateId || createPendingProductId();
+      if (!editing && !pendingCreateId) setPendingCreateId(operationId);
+      const saved = await saveProductBatch([{ id: operationId, product: payload }]);
       if (!saved) {
         setFormError('Product was not saved to the database. Your form values are still here; retry after resolving the shared-store error.');
         return;

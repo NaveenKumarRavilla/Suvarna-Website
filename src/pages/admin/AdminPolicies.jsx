@@ -22,6 +22,7 @@ export default function AdminPolicies() {
   const { policies, addPolicy, updatePolicy, deletePolicy } = useAdmin();
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
+  const [editBase, setEditBase] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
@@ -29,15 +30,15 @@ export default function AdminPolicies() {
   useEffect(() => {
     try {
       const draft = JSON.parse(localStorage.getItem(POLICY_DRAFT_KEY) || 'null');
-      if (draft?.form) { setForm(draft.form); setEditingId(draft.editingId ?? ''); setNotice('Recovered an unsaved policy form from this browser.'); }
+      if (draft?.form) { setForm(draft.form); setEditingId(draft.editingId ?? ''); setEditBase(draft.baseRecord || null); setNotice('Recovered an unsaved policy form from this browser.'); }
     } catch (restoreError) { console.error('Could not restore policy draft.', restoreError); }
   }, []);
 
   useEffect(() => {
     if (editingId === null) return;
-    try { localStorage.setItem(POLICY_DRAFT_KEY, JSON.stringify({ form, editingId })); }
+    try { localStorage.setItem(POLICY_DRAFT_KEY, JSON.stringify({ form, editingId, baseRecord: editBase })); }
     catch (draftError) { console.error('Could not preserve policy draft.', draftError); }
-  }, [editingId, form]);
+  }, [editBase, editingId, form]);
 
   const setField = (key) => (event) =>
     setForm((current) => ({ ...current, [key]: event.target.value }));
@@ -45,6 +46,7 @@ export default function AdminPolicies() {
   const closeEditor = () => {
     setForm(emptyForm);
     setEditingId(null);
+    setEditBase(null);
     setError('');
     try { localStorage.removeItem(POLICY_DRAFT_KEY); } catch (draftError) { console.error('Could not clear policy draft.', draftError); }
   };
@@ -52,6 +54,7 @@ export default function AdminPolicies() {
   const editPolicy = (id) => {
     const policy = policies[id];
     setEditingId(id);
+    setEditBase(JSON.stringify(policy));
     setForm({
       title: policy.title || '',
       summary: policy.summary || '',
@@ -90,6 +93,10 @@ export default function AdminPolicies() {
     }
     if (!editingId && policies[id]) {
       setError('A policy with this URL already exists. Choose a different title.');
+      return;
+    }
+    if (editingId && (!policies[id] || JSON.stringify(policies[id]) !== editBase)) {
+      setError('This policy changed in another admin session after you opened it. Your draft is preserved; reload the latest policy and reapply your changes.');
       return;
     }
 

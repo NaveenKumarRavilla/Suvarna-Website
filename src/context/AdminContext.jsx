@@ -560,6 +560,7 @@ export function AdminProvider({ children }) {
       if (operation.id != null) {
         const index = products.findIndex((product) => String(product.id) === String(operation.id));
         if (index >= 0) products[index] = { ...products[index], ...operation.product };
+        else products.push({ ...operation.product, id: operation.id });
         continue;
       }
       products.push({ ...operation.product, id: createPermanentProductId() });

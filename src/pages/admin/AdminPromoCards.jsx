@@ -35,6 +35,7 @@ export default function AdminPromoCards() {
   const { promoCards, addPromoCard, updatePromoCard, deletePromoCard } = useAdmin();
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
+  const [editBase, setEditBase] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -42,24 +43,26 @@ export default function AdminPromoCards() {
   useEffect(() => {
     try {
       const draft = JSON.parse(localStorage.getItem(PROMO_DRAFT_KEY) || 'null');
-      if (draft?.form) { setForm({ ...emptyForm, ...draft.form }); setEditingId(draft.editingId ?? null); setModalOpen(true); setSaveError('Recovered an unsaved promo card form from this browser.'); }
+      if (draft?.form) { setForm({ ...emptyForm, ...draft.form }); setEditingId(draft.editingId ?? null); setEditBase(draft.baseRecord || null); setModalOpen(true); setSaveError('Recovered an unsaved promo card form from this browser.'); }
     } catch (error) { console.error('Could not restore promo card draft.', error); }
   }, []);
 
   useEffect(() => {
     if (!modalOpen) return;
-    try { localStorage.setItem(PROMO_DRAFT_KEY, JSON.stringify({ form, editingId })); }
+    try { localStorage.setItem(PROMO_DRAFT_KEY, JSON.stringify({ form, editingId, baseRecord: editBase })); }
     catch (error) { console.error('Could not preserve promo card draft.', error); }
-  }, [editingId, form, modalOpen]);
+  }, [editBase, editingId, form, modalOpen]);
 
   const openAdd = () => {
     setEditingId(null);
+    setEditBase(null);
     setForm(emptyForm);
     setModalOpen(true);
   };
 
   const openEdit = (promo) => {
     setEditingId(promo.id);
+    setEditBase(JSON.stringify(promo));
     setForm({
       tag: promo.tag || '',
       title: promo.title || '',
@@ -85,6 +88,14 @@ export default function AdminPromoCards() {
       cta: form.cta.trim(),
       link: form.link.trim(),
     };
+
+    if (editingId !== null) {
+      const current = promoCards.find((promo) => String(promo.id) === String(editingId));
+      if (!current || JSON.stringify(current) !== editBase) {
+        setSaveError('This promo card changed in another admin session after you opened it. Your draft is preserved; reload the latest card and reapply your changes.');
+        return;
+      }
+    }
 
     setSaving(true);
     const saved = editingId !== null ? await updatePromoCard(editingId, payload) : await addPromoCard(payload);
