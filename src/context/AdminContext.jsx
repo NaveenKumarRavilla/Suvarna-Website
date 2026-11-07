@@ -572,9 +572,9 @@ export function AdminProvider({ children }) {
     let banners = [...current.banners];
     for (const operation of operations) {
       if (operation.id != null) {
-        banners = banners.map((banner) =>
-          String(banner.id) === String(operation.id) ? { ...banner, ...operation.banner } : banner
-        );
+        const index = banners.findIndex((banner) => String(banner.id) === String(operation.id));
+        if (index >= 0) banners[index] = { ...banners[index], ...operation.banner };
+        else banners.push({ ...operation.banner, id: operation.id });
       } else {
         banners.push({ ...operation.banner, id: nextId(banners) });
       }
@@ -944,24 +944,45 @@ export function AdminProvider({ children }) {
         setStore((s) => ({ ...s, banners: dedupeBanners(s.banners.filter((b) => b.id !== id)) })),
 
       promoCards: store.promoCards,
-      addPromoCard: (item) =>
-        commitSharedMutation((s) => ({ ...s, promoCards: [...s.promoCards, { ...item, id: nextId(s.promoCards), active: true }] })),
+      addPromoCard: (item) => commitSharedMutation((s) => {
+        const id = item.id ?? nextId(s.promoCards);
+        const existing = s.promoCards.findIndex((card) => String(card.id) === String(id));
+        const promoCard = { ...item, id, active: item.active ?? true };
+        const promoCards = [...s.promoCards];
+        if (existing >= 0) promoCards[existing] = { ...promoCards[existing], ...promoCard };
+        else promoCards.push(promoCard);
+        return { ...s, promoCards };
+      }),
       updatePromoCard: (id, patch) =>
         commitSharedMutation((s) => ({ ...s, promoCards: s.promoCards.map((item) => (item.id === id ? { ...item, ...patch } : item)) })),
       deletePromoCard: (id) =>
         setStore((s) => ({ ...s, promoCards: s.promoCards.filter((item) => item.id !== id) })),
 
       offers: store.offers,
-      addOffer: (item) =>
-        commitSharedMutation((s) => ({ ...s, offers: [...s.offers, { ...item, id: nextId(s.offers) }] })),
+      addOffer: (item) => commitSharedMutation((s) => {
+        const id = item.id ?? nextId(s.offers);
+        const existing = s.offers.findIndex((offer) => String(offer.id) === String(id));
+        const offer = { ...item, id };
+        const offers = [...s.offers];
+        if (existing >= 0) offers[existing] = { ...offers[existing], ...offer };
+        else offers.push(offer);
+        return { ...s, offers };
+      }),
       updateOffer: (id, patch) =>
         commitSharedMutation((s) => ({ ...s, offers: s.offers.map((o) => (o.id === id ? { ...o, ...patch } : o)) })),
       deleteOffer: (id) =>
         setStore((s) => ({ ...s, offers: s.offers.filter((o) => o.id !== id) })),
 
       videos: store.videos,
-      addVideo: (item) =>
-        commitSharedMutation((s) => ({ ...s, videos: [...s.videos, { ...item, id: nextId(s.videos) }] })),
+      addVideo: (item) => commitSharedMutation((s) => {
+        const id = item.id ?? nextId(s.videos);
+        const existing = s.videos.findIndex((video) => String(video.id) === String(id));
+        const video = { ...item, id };
+        const videos = [...s.videos];
+        if (existing >= 0) videos[existing] = { ...videos[existing], ...video };
+        else videos.push(video);
+        return { ...s, videos };
+      }),
       updateVideo: (id, patch) =>
         commitSharedMutation((s) => ({ ...s, videos: s.videos.map((v) => (v.id === id ? { ...v, ...patch } : v)) })),
       deleteVideo: (id) =>

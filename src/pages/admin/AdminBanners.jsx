@@ -5,6 +5,7 @@ import Button from '../../components/common/Button';
 import ImageUpload from '../../components/admin/ImageUpload';
 import { uploadMediaFile, validateVideoDuration } from '../../utils/media';
 import { downloadCsv, parseCsv } from '../../utils/csv';
+import { createClientRecordId } from '../../utils/recordId';
 import {
   Modal,
   Field,
@@ -36,6 +37,7 @@ const gradients = [
 ];
 const bannerCsvHeaders = ['id', 'badge', 'title', 'subtitle', 'cta', 'link', 'image', 'video', 'mediaType', 'mediaFit', 'gradient'];
 const BANNER_FORM_DRAFT_KEY = 'suvarna_admin_banner_form_draft';
+const BANNER_IMPORT_DRAFT_KEY = 'suvarna_admin_banner_import_draft';
 
 const parseBannerCsv = (text) => {
   const rows = parseCsv(text);
@@ -85,6 +87,7 @@ export default function AdminBanners() {
   const { banners, saveBannerBatch, updateBanner, deleteBanner, setAdminFormDirty } = useAdmin();
   const [editing, setEditing] = useState(null);
   const [editBase, setEditBase] = useState(null);
+  const [pendingBannerId, setPendingBannerId] = useState(null);
   const [isCloning, setIsCloning] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [modalOpen, setModalOpen] = useState(false);
@@ -108,6 +111,7 @@ export default function AdminBanners() {
       const existing = banners.find((banner) => String(banner.id) === String(draft.editingId));
       setEditing(draft.mode === 'edit' ? existing || null : null);
       setEditBase(draft.mode === 'edit' && existing ? (draft.baseRecord || JSON.stringify(existing)) : null);
+      setPendingBannerId(draft.pendingBannerId || null);
       setIsCloning(draft.mode === 'clone');
       setForm({ ...emptyForm, ...draft.form });
       setModalOpen(true);
@@ -126,15 +130,17 @@ export default function AdminBanners() {
         editingId: editing?.id ?? null,
         mode: editing ? 'edit' : isCloning ? 'clone' : 'add',
         baseRecord: editBase,
+        pendingBannerId,
       }));
     } catch (error) {
       console.error('Could not preserve the banner form draft.', error);
     }
-  }, [editBase, editing, form, isCloning, modalOpen]);
+  }, [editBase, editing, form, isCloning, modalOpen, pendingBannerId]);
 
   const openAdd = () => {
     setEditing(null);
     setEditBase(null);
+    setPendingBannerId(createClientRecordId('BNR'));
     setIsCloning(false);
     setForm(emptyForm);
     setVideoError('');
@@ -144,6 +150,7 @@ export default function AdminBanners() {
   const openEdit = (b) => {
     setEditing(b);
     setEditBase(JSON.stringify(b));
+    setPendingBannerId(null);
     setIsCloning(false);
     setForm({
       badge: b.badge,
@@ -163,6 +170,7 @@ export default function AdminBanners() {
   const openClone = (banner) => {
     setEditing(null);
     setEditBase(null);
+    setPendingBannerId(createClientRecordId('BNR'));
     setIsCloning(true);
     setForm({
       badge: banner.badge || '',
@@ -182,6 +190,7 @@ export default function AdminBanners() {
   };
   const closeModal = (saved = false) => {
     if (!saved && !window.confirm('Discard this banner form?')) return;
+    setPendingBannerId(null);
     setModalOpen(false);
     setAdminFormDirty(false);
     try {
@@ -232,7 +241,12 @@ export default function AdminBanners() {
 
     setSavingBanner(true);
     try {
-      const saved = await saveBannerBatch([{ ...(editing ? { id: editing.id } : {}), banner: payload }]);
+      const operationId = editing?.id || pendingBannerId || createClientRecordId('BNR');
+      if (!editing && !pendingBannerId) {
+        setPendingBannerId(operationId);
+        localStorage.setItem(BANNER_FORM_DRAFT_KEY, JSON.stringify({ form, editingId: null, mode: 'add', baseRecord: null, pendingBannerId: operationId }));
+      }
+      const saved = await saveBannerBatch([{ id: operationId, banner: payload }]);
       if (!saved) {
         setImportError('Banner was not saved to the database. Your form values are still here; retry after resolving the shared-store error.');
         return;
@@ -263,28 +277,36 @@ export default function AdminBanners() {
     setImportError('');
     setImportStatus('');
     try {
-      const imported = parseBannerCsv(await file.text());
+      const sourceText = await file.text();
+      const imported = parseBannerCsv(sourceText);
+      let pendingImport = null;
+      try {
+        const stored = JSON.parse(localStorage.getItem(BANNER_IMPORT_DRAFT_KEY) || 'null');
+        if (stored?.sourceText === sourceText && Array.isArray(stored.ids)) pendingImport = stored;
+      } catch (storageError) { console.error('Could not restore banner import IDs.', storageError); }
       const existingBanners = new Map(banners.map((banner) => [String(banner.id), banner]));
-      const plans = imported.map(({ id, banner }) => {
+      const plans = imported.map(({ id, banner }, rowIndex) => {
         const existing = id ? existingBanners.get(id) : null;
-        if (existing) return { existing, banner };
+        if (existing) return { existing, banner, operationId: existing.id };
         const newBanner = { ...emptyForm, ...banner, gradient: banner.gradient || gradients[0].value };
         const mediaType = banner.mediaType || (newBanner.video ? 'video' : 'image');
         newBanner.mediaType = mediaType;
         if (mediaType === 'video' ? !newBanner.video : !newBanner.image) {
           throw new Error(`New banner "${newBanner.title}" must include its ${mediaType} media.`);
         }
-        return { banner: newBanner };
+        return { banner: newBanner, operationId: id || pendingImport?.ids?.[rowIndex] || createClientRecordId('BNR') };
       });
       let updated = 0;
       let added = 0;
-      const operations = plans.map(({ existing, banner }) => ({
-        ...(existing ? { id: existing.id } : {}),
+      const operations = plans.map(({ banner, operationId }) => ({
+        id: operationId,
         banner,
       }));
+      localStorage.setItem(BANNER_IMPORT_DRAFT_KEY, JSON.stringify({ sourceText, ids: plans.map(({ operationId }) => operationId) }));
       if (!await saveBannerBatch(operations)) {
         throw new Error('Banners were not saved to the database. Resolve the shared-store error and retry the import.');
       }
+      localStorage.removeItem(BANNER_IMPORT_DRAFT_KEY);
       plans.forEach(({ existing }) => {
         if (existing) updated += 1;
         else added += 1;

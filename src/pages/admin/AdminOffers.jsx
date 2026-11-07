@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2, BadgePercent } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 import Button from '../../components/common/Button';
+import { createClientRecordId } from '../../utils/recordId';
 import {
   Modal,
   Field,
@@ -19,23 +20,32 @@ export default function AdminOffers() {
   const [modalOpen, setModalOpen] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [pendingOfferId, setPendingOfferId] = useState(null);
 
   useEffect(() => {
-    try { const draft = JSON.parse(localStorage.getItem(OFFER_DRAFT_KEY) || 'null'); if (draft?.form) { setForm({ ...emptyForm, ...draft.form }); setModalOpen(true); setSaveError('Recovered an unsaved offer form from this browser.'); } }
+    try { const draft = JSON.parse(localStorage.getItem(OFFER_DRAFT_KEY) || 'null'); if (draft?.form) { setForm({ ...emptyForm, ...draft.form }); setPendingOfferId(draft.pendingId || null); setModalOpen(true); setSaveError('Recovered an unsaved offer form from this browser.'); } }
     catch (error) { console.error('Could not restore offer draft.', error); }
   }, []);
   useEffect(() => {
     if (!modalOpen) return;
-    try { localStorage.setItem(OFFER_DRAFT_KEY, JSON.stringify({ form })); }
+    try { localStorage.setItem(OFFER_DRAFT_KEY, JSON.stringify({ form, pendingId: pendingOfferId })); }
     catch (error) { console.error('Could not preserve offer draft.', error); }
-  }, [form, modalOpen]);
+  }, [form, modalOpen, pendingOfferId]);
+
+  const openAdd = () => { setForm(emptyForm); setPendingOfferId(createClientRecordId('OFR')); setModalOpen(true); };
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
-    const saved = await addOffer({ ...form, active: true });
+    const id = pendingOfferId || createClientRecordId('OFR');
+    if (!pendingOfferId) {
+      setPendingOfferId(id);
+      try { localStorage.setItem(OFFER_DRAFT_KEY, JSON.stringify({ form, pendingId: id })); }
+      catch (storageError) { console.error('Could not preserve offer creation ID.', storageError); }
+    }
+    const saved = await addOffer({ ...form, id, active: true });
     setSaving(false);
     if (!saved) { setSaveError('Offer was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'); return; }
     setSaveError('');
@@ -50,7 +60,7 @@ export default function AdminOffers() {
         title="Manage Offers"
         subtitle="Promotional offers and deals"
         action={
-          <Button variant="secondary" size="md" onClick={() => setModalOpen(true)}>
+            <Button variant="secondary" size="md" onClick={openAdd}>
             <Plus size={16} />
             Add Offer
           </Button>

@@ -138,6 +138,7 @@ const warrantyFormValues = (warranty = '') => {
   return { warrantyDuration: match[1], warrantyUnit: match[2].toLowerCase().startsWith('month') ? 'Month' : 'Year', warrantyKind: /standard/i.test(match[3]) ? 'Standard Warranty' : 'Brand Warranty' };
 };
 const PRODUCT_FORM_DRAFT_KEY = 'suvarna_admin_product_form_draft';
+const PRODUCT_IMPORT_DRAFT_KEY = 'suvarna_admin_product_import_draft';
 const createPendingProductId = () => {
   const cryptoApi = globalThis.crypto;
   if (!cryptoApi?.getRandomValues) throw new Error('Secure product ID generation is unavailable in this browser.');
@@ -310,7 +311,11 @@ export default function AdminProducts() {
     setSavingProduct(true);
     try {
       const operationId = editing?.id || pendingCreateId || createPendingProductId();
-      if (!editing && !pendingCreateId) setPendingCreateId(operationId);
+      if (!editing && !pendingCreateId) {
+        setPendingCreateId(operationId);
+        try { localStorage.setItem(PRODUCT_FORM_DRAFT_KEY, JSON.stringify({ form, editingId: null, mode: formMode, baseRecord: null, pendingCreateId: operationId })); }
+        catch (storageError) { console.error('Could not preserve the product creation ID.', storageError); }
+      }
       const saved = await saveProductBatch([{ id: operationId, product: payload }]);
       if (!saved) {
         setFormError('Product was not saved to the database. Your form values are still here; retry after resolving the shared-store error.');
@@ -368,23 +373,35 @@ export default function AdminProducts() {
     setImportError('');
     setImportStatus('');
     try {
-      const imported = parseProductCsv(await file.text());
+      const sourceText = await file.text();
+      const imported = parseProductCsv(sourceText);
+      let pendingImport = null;
+      try {
+        const stored = JSON.parse(localStorage.getItem(PRODUCT_IMPORT_DRAFT_KEY) || 'null');
+        if (stored?.sourceText === sourceText && Array.isArray(stored.ids)) pendingImport = stored;
+      } catch (storageError) { console.error('Could not restore product import IDs.', storageError); }
       const currentProducts = new Map(products.map((product) => [String(product.id), product]));
       let updated = 0;
       let added = 0;
-      const operations = imported.map(({ id, product, fields }) => {
+      const operationIds = [];
+      const operations = imported.map(({ id, product, fields }, rowIndex) => {
         const existing = id ? currentProducts.get(id) : null;
         if (existing) {
           const patch = Object.fromEntries(Object.entries(product).filter(([field]) => fields.has(field)));
+          operationIds.push(existing.id);
           return { id: existing.id, product: patch };
         }
         const newProduct = { ...product };
         delete newProduct.id;
-        return { product: newProduct };
+        const operationId = id || pendingImport?.ids?.[rowIndex] || createPendingProductId();
+        operationIds.push(operationId);
+        return { id: operationId, product: newProduct };
       });
+      localStorage.setItem(PRODUCT_IMPORT_DRAFT_KEY, JSON.stringify({ sourceText, ids: operationIds }));
       if (!await saveProductBatch(operations)) {
         throw new Error('Products were not saved to the database. Resolve the shared-store error and retry the import.');
       }
+      localStorage.removeItem(PRODUCT_IMPORT_DRAFT_KEY);
       imported.forEach(({ id }) => {
         if (id && currentProducts.has(id)) updated += 1;
         else added += 1;

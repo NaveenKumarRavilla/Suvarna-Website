@@ -3,6 +3,7 @@ import { Images, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 import Button from '../../components/common/Button';
 import ImageUpload from '../../components/admin/ImageUpload';
+import { createClientRecordId } from '../../utils/recordId';
 import {
   Field,
   inputCls,
@@ -36,6 +37,7 @@ export default function AdminPromoCards() {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [editBase, setEditBase] = useState(null);
+  const [pendingPromoId, setPendingPromoId] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -43,19 +45,20 @@ export default function AdminPromoCards() {
   useEffect(() => {
     try {
       const draft = JSON.parse(localStorage.getItem(PROMO_DRAFT_KEY) || 'null');
-      if (draft?.form) { setForm({ ...emptyForm, ...draft.form }); setEditingId(draft.editingId ?? null); setEditBase(draft.baseRecord || null); setModalOpen(true); setSaveError('Recovered an unsaved promo card form from this browser.'); }
+      if (draft?.form) { setForm({ ...emptyForm, ...draft.form }); setEditingId(draft.editingId ?? null); setEditBase(draft.baseRecord || null); setPendingPromoId(draft.pendingId || null); setModalOpen(true); setSaveError('Recovered an unsaved promo card form from this browser.'); }
     } catch (error) { console.error('Could not restore promo card draft.', error); }
   }, []);
 
   useEffect(() => {
     if (!modalOpen) return;
-    try { localStorage.setItem(PROMO_DRAFT_KEY, JSON.stringify({ form, editingId, baseRecord: editBase })); }
+    try { localStorage.setItem(PROMO_DRAFT_KEY, JSON.stringify({ form, editingId, baseRecord: editBase, pendingId: pendingPromoId })); }
     catch (error) { console.error('Could not preserve promo card draft.', error); }
-  }, [editBase, editingId, form, modalOpen]);
+  }, [editBase, editingId, form, modalOpen, pendingPromoId]);
 
   const openAdd = () => {
     setEditingId(null);
     setEditBase(null);
+    setPendingPromoId(createClientRecordId('PMC'));
     setForm(emptyForm);
     setModalOpen(true);
   };
@@ -63,6 +66,7 @@ export default function AdminPromoCards() {
   const openEdit = (promo) => {
     setEditingId(promo.id);
     setEditBase(JSON.stringify(promo));
+    setPendingPromoId(null);
     setForm({
       tag: promo.tag || '',
       title: promo.title || '',
@@ -98,7 +102,13 @@ export default function AdminPromoCards() {
     }
 
     setSaving(true);
-    const saved = editingId !== null ? await updatePromoCard(editingId, payload) : await addPromoCard(payload);
+    const id = pendingPromoId || createClientRecordId('PMC');
+    if (editingId === null && !pendingPromoId) {
+      setPendingPromoId(id);
+      try { localStorage.setItem(PROMO_DRAFT_KEY, JSON.stringify({ form, editingId, baseRecord: editBase, pendingId: id })); }
+      catch (storageError) { console.error('Could not preserve promo-card creation ID.', storageError); }
+    }
+    const saved = editingId !== null ? await updatePromoCard(editingId, payload) : await addPromoCard({ ...payload, id });
     setSaving(false);
     if (!saved) { setSaveError('Promo card was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'); return; }
     setSaveError('');

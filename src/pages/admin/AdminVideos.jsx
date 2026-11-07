@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2, Youtube } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 import Button from '../../components/common/Button';
+import { createClientRecordId } from '../../utils/recordId';
 import {
   Modal,
   Field,
@@ -19,16 +20,19 @@ export default function AdminVideos() {
   const [modalOpen, setModalOpen] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [pendingVideoId, setPendingVideoId] = useState(null);
 
   useEffect(() => {
-    try { const draft = JSON.parse(localStorage.getItem(VIDEO_DRAFT_KEY) || 'null'); if (draft?.form) { setForm({ ...emptyForm, ...draft.form }); setModalOpen(true); setSaveError('Recovered an unsaved video form from this browser.'); } }
+    try { const draft = JSON.parse(localStorage.getItem(VIDEO_DRAFT_KEY) || 'null'); if (draft?.form) { setForm({ ...emptyForm, ...draft.form }); setPendingVideoId(draft.pendingId || null); setModalOpen(true); setSaveError('Recovered an unsaved video form from this browser.'); } }
     catch (error) { console.error('Could not restore video draft.', error); }
   }, []);
   useEffect(() => {
     if (!modalOpen) return;
-    try { localStorage.setItem(VIDEO_DRAFT_KEY, JSON.stringify({ form })); }
+    try { localStorage.setItem(VIDEO_DRAFT_KEY, JSON.stringify({ form, pendingId: pendingVideoId })); }
     catch (error) { console.error('Could not preserve video draft.', error); }
-  }, [form, modalOpen]);
+  }, [form, modalOpen, pendingVideoId]);
+
+  const openAdd = () => { setForm(emptyForm); setPendingVideoId(createClientRecordId('VID')); setModalOpen(true); };
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -40,7 +44,13 @@ export default function AdminVideos() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
-    const saved = await addVideo({ ...form, youtubeId: extractId(form.youtubeId), active: true });
+    const id = pendingVideoId || createClientRecordId('VID');
+    if (!pendingVideoId) {
+      setPendingVideoId(id);
+      try { localStorage.setItem(VIDEO_DRAFT_KEY, JSON.stringify({ form, pendingId: id })); }
+      catch (storageError) { console.error('Could not preserve video creation ID.', storageError); }
+    }
+    const saved = await addVideo({ ...form, id, youtubeId: extractId(form.youtubeId), active: true });
     setSaving(false);
     if (!saved) { setSaveError('Video was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'); return; }
     setSaveError('');
@@ -55,7 +65,7 @@ export default function AdminVideos() {
         title="Manage Videos"
         subtitle="Product videos embedded on the store"
         action={
-          <Button variant="secondary" size="md" onClick={() => setModalOpen(true)}>
+            <Button variant="secondary" size="md" onClick={openAdd}>
             <Plus size={16} />
             Add Video
           </Button>
