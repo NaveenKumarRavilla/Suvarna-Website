@@ -23,6 +23,7 @@ import { useWishlist } from '../context/WishlistContext';
 import useCart from '../hooks/useCart';
 import { formatPrice, handleImgError } from '../utils/helpers';
 import Button from '../components/common/Button';
+import OrderProductLink from '../components/common/OrderProductLink';
 import { StatusBadge, inputCls, labelCls } from '../components/admin/AdminForm';
 import { apiRequest } from '../utils/api';
 
@@ -402,11 +403,11 @@ export default function Account() {
                       <ul className="divide-y divide-slate-100">
                         {(o.items || []).map((item, index) => (
                           <li key={`${o.id}-${item.id || item.name || index}`} className="grid gap-3 px-4 py-4 sm:grid-cols-[76px_minmax(0,1fr)_auto] sm:items-center sm:px-5">
-                            <Link to={item.id ? `/product/${item.id}` : '/products'} className="flex h-[76px] w-[76px] items-center justify-center overflow-hidden rounded-md bg-slate-50" aria-label={`View ${item.name || 'ordered product'}`}>
+                            <OrderProductLink item={item} className="flex h-[76px] w-[76px] items-center justify-center overflow-hidden rounded-md bg-slate-50" aria-label={`View ${item.name || 'ordered product'}`}>
                               {(item.image || item.images?.[0]) ? <img src={item.image || item.images?.[0]} alt={item.name || ''} onError={handleImgError} className="h-full w-full object-contain p-1" /> : <Package size={26} className="text-slate-300" />}
-                            </Link>
+                            </OrderProductLink>
                             <div className="min-w-0">
-                              <Link to={item.id ? `/product/${item.id}` : '/products'} className="line-clamp-2 text-sm font-semibold text-primary hover:text-secondary">{item.name || 'Product'}</Link>
+                              <OrderProductLink item={item} className="line-clamp-2 text-sm font-semibold text-primary hover:text-secondary">{item.name || 'Product'}</OrderProductLink>
                               <p className="mt-1 text-xs text-slate-500">{item.brand || 'Suvarna IT Enterprises'} <span className="px-1 text-slate-300">·</span> Qty {item.qty || 1}</p>
                               <p className="mt-2 text-xs text-slate-500">{o.status === 'Delivered' ? 'Delivered' : o.status === 'Cancelled' ? 'Order cancelled' : o.status === 'Shipped' ? 'On the way' : o.status === 'Processing' ? 'Being prepared' : 'Order received'}</p>
                             </div>

@@ -8,6 +8,7 @@ import { isPublishableProduct } from '../../utils/productQuality';
 import { downloadCsv, parseCsv } from '../../utils/csv';
 import { apiRequest } from '../../utils/api';
 import { fingerprintText } from '../../utils/textFingerprint';
+import { clearPendingImportDraft, getPendingImportDraft, rememberPendingImportDraft } from '../../utils/pendingImportDrafts';
 import Button from '../../components/common/Button';
 import ImageUpload from '../../components/admin/ImageUpload';
 import { Field, PageHeader, inputCls, tableWrap, tableCls, thCls, tdCls } from '../../components/admin/AdminForm';
@@ -381,8 +382,7 @@ export default function AdminProducts() {
       const imported = parseProductCsv(sourceText);
       let pendingImport = null;
       try {
-        const stored = JSON.parse(localStorage.getItem(PRODUCT_IMPORT_DRAFT_KEY) || 'null');
-        if (stored?.fingerprint === sourceFingerprint && Array.isArray(stored.ids)) pendingImport = stored;
+        pendingImport = getPendingImportDraft(localStorage, PRODUCT_IMPORT_DRAFT_KEY, sourceFingerprint);
       } catch (storageError) { retryStorageAvailable = false; console.error('Could not restore product import IDs.', storageError); }
       if (!pendingImport) pendingImport = getPendingImportIds('products', sourceFingerprint);
       const currentProducts = new Map(products.map((product) => [String(product.id), product]));
@@ -404,13 +404,13 @@ export default function AdminProducts() {
       });
       const pendingIds = { fingerprint: sourceFingerprint, ids: operationIds };
       rememberPendingImportIds('products', pendingIds);
-      try { localStorage.setItem(PRODUCT_IMPORT_DRAFT_KEY, JSON.stringify(pendingIds)); }
+      try { rememberPendingImportDraft(localStorage, PRODUCT_IMPORT_DRAFT_KEY, pendingIds); }
       catch (storageError) { retryStorageAvailable = false; console.error('Could not persist product import IDs.', storageError); }
       if (!await saveProductBatch(operations)) {
         throw new Error(`Products were not saved to the database. Resolve the shared-store error and retry the same import.${retryStorageAvailable ? '' : ' Browser storage is unavailable, so retry in this tab before reloading; the IDs are retained in memory.'}`);
       }
       clearPendingImportIds('products', sourceFingerprint);
-      try { localStorage.removeItem(PRODUCT_IMPORT_DRAFT_KEY); } catch (storageError) { console.error('Could not clear product import IDs.', storageError); }
+      try { clearPendingImportDraft(localStorage, PRODUCT_IMPORT_DRAFT_KEY, sourceFingerprint); } catch (storageError) { console.error('Could not clear product import IDs.', storageError); }
       imported.forEach(({ id }) => {
         if (id && currentProducts.has(id)) updated += 1;
         else added += 1;

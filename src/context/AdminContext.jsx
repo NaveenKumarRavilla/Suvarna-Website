@@ -282,13 +282,21 @@ export function AdminProvider({ children }) {
   const sharedStoreReadyRef = useRef(sharedStoreReady);
   sharedStoreReadyRef.current = sharedStoreReady;
   const getPendingImportIds = useCallback((kind, fingerprint) => {
-    const pending = pendingImportIdsRef.current.get(kind);
-    return pending?.fingerprint === fingerprint ? pending : null;
+    return pendingImportIdsRef.current.get(kind)?.get(fingerprint) || null;
   }, []);
-  const rememberPendingImportIds = useCallback((kind, pending) => pendingImportIdsRef.current.set(kind, pending), []);
+  const rememberPendingImportIds = useCallback((kind, pending) => {
+    if (!pending?.fingerprint) return;
+    let imports = pendingImportIdsRef.current.get(kind);
+    if (!imports) {
+      imports = new Map();
+      pendingImportIdsRef.current.set(kind, imports);
+    }
+    imports.set(pending.fingerprint, pending);
+  }, []);
   const clearPendingImportIds = useCallback((kind, fingerprint) => {
-    const pending = pendingImportIdsRef.current.get(kind);
-    if (pending?.fingerprint === fingerprint) pendingImportIdsRef.current.delete(kind);
+    const imports = pendingImportIdsRef.current.get(kind);
+    imports?.delete(fingerprint);
+    if (imports?.size === 0) pendingImportIdsRef.current.delete(kind);
   }, []);
   const persistSharedDraft = (data) => {
     try {

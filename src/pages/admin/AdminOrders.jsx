@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ExternalLink, Search } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import OrderProductLink from '../../components/common/OrderProductLink';
 import { useAdmin } from '../../context/AdminContext';
 import { formatPrice } from '../../utils/helpers';
 import { PageHeader, tableWrap, tableCls, thCls, tdCls, inputCls } from '../../components/admin/AdminForm';
@@ -86,9 +86,9 @@ export default function AdminOrders() {
                   <td className={tdCls}>
                     <div className="space-y-1">
                       {(o.items || []).map((item, idx) => (
-                        <Link
+                        <OrderProductLink
+                          item={item}
                           key={`${o.id}-${item.name || 'item'}-${idx}`}
-                          to={item.id ? `/product/${item.id}` : '#'}
                           className="flex items-center gap-2 rounded-md bg-slate-50 px-2 py-1 transition hover:bg-secondary/10"
                           aria-label={`Open product ${item.name || 'details'} in storefront`}
                         >
@@ -104,7 +104,7 @@ export default function AdminOrders() {
                             </span>
                           </span>
                           <ExternalLink size={12} className="ml-auto shrink-0 text-slate-400" />
-                        </Link>
+                        </OrderProductLink>
                       ))}
                     </div>
                   </td>
