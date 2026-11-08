@@ -812,6 +812,9 @@ export function AdminProvider({ children }) {
     const hasPermission = (permission) => isMaster || !!currentAdmin?.permissions?.includes(permission);
 
     return {
+      getPendingImportIds,
+      rememberPendingImportIds,
+      clearPendingImportIds, 
       currentUser,
       sharedStoreReady,
       storefrontReady,
