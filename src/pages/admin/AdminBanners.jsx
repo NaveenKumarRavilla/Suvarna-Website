@@ -85,7 +85,7 @@ const parseBannerCsv = (text) => {
 };
 
 export default function AdminBanners() {
-  const { banners, saveBannerBatch, updateBanner, deleteBanner, setAdminFormDirty } = useAdmin();
+  const { banners, saveBannerBatch, updateBanner, deleteBanner, setAdminFormDirty, getPendingImportIds, rememberPendingImportIds, clearPendingImportIds } = useAdmin();
   const [editing, setEditing] = useState(null);
   const [editBase, setEditBase] = useState(null);
   const [pendingBannerId, setPendingBannerId] = useState(null);
@@ -99,7 +99,6 @@ export default function AdminBanners() {
   const [savingBanner, setSavingBanner] = useState(false);
   const [resetNotice, setResetNotice] = useState('');
   const importInputRef = useRef(null);
-  const pendingBannerImportRef = useRef(null);
   const restoredDraftRef = useRef(false);
 
   useEffect(() => () => setAdminFormDirty(false), [setAdminFormDirty]);
@@ -288,7 +287,7 @@ export default function AdminBanners() {
         const stored = JSON.parse(localStorage.getItem(BANNER_IMPORT_DRAFT_KEY) || 'null');
         if (stored?.fingerprint === sourceFingerprint && Array.isArray(stored.ids)) pendingImport = stored;
       } catch (storageError) { retryStorageAvailable = false; console.error('Could not restore banner import IDs.', storageError); }
-      if (!pendingImport && pendingBannerImportRef.current?.fingerprint === sourceFingerprint) pendingImport = pendingBannerImportRef.current;
+      if (!pendingImport) pendingImport = getPendingImportIds('banners', sourceFingerprint);
       const existingBanners = new Map(banners.map((banner) => [String(banner.id), banner]));
       const plans = imported.map(({ id, banner }, rowIndex) => {
         const existing = id ? existingBanners.get(id) : null;
@@ -307,13 +306,14 @@ export default function AdminBanners() {
         id: operationId,
         banner,
       }));
-      pendingBannerImportRef.current = { fingerprint: sourceFingerprint, ids: plans.map(({ operationId }) => operationId) };
-      try { localStorage.setItem(BANNER_IMPORT_DRAFT_KEY, JSON.stringify(pendingBannerImportRef.current)); }
+      const pendingIds = { fingerprint: sourceFingerprint, ids: plans.map(({ operationId }) => operationId) };
+      rememberPendingImportIds('banners', pendingIds);
+      try { localStorage.setItem(BANNER_IMPORT_DRAFT_KEY, JSON.stringify(pendingIds)); }
       catch (storageError) { retryStorageAvailable = false; console.error('Could not persist banner import IDs.', storageError); }
       if (!await saveBannerBatch(operations)) {
         throw new Error(`Banners were not saved to the database. Resolve the shared-store error and retry the same import.${retryStorageAvailable ? '' : ' Browser storage is unavailable, so retry in this tab before reloading; the IDs are retained in memory.'}`);
       }
-      pendingBannerImportRef.current = null;
+      clearPendingImportIds('banners', sourceFingerprint);
       try { localStorage.removeItem(BANNER_IMPORT_DRAFT_KEY); } catch (storageError) { console.error('Could not clear banner import IDs.', storageError); }
       plans.forEach(({ existing }) => {
         if (existing) updated += 1;

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { CartProvider } from './context/CartContext';
 import { AdminProvider } from './context/AdminContext';
@@ -10,34 +10,34 @@ import CategoryNav from './components/layout/CategoryNav';
 import Footer from './components/layout/Footer';
 import WhatsAppButton from './components/layout/WhatsAppButton';
 import AdminLayout, { AdminPermission } from './components/admin/AdminLayout';
-import Home from './pages/Home';
-import Products from './pages/Products';
-import ProductDetailsPage from './pages/ProductDetails';
-import Cart from './pages/Cart';
-import Checkout from './pages/Checkout';
-import WishlistPage from './pages/Wishlist';
-import Login from './pages/Login';
-import ForgotPassword from './pages/ForgotPassword';
-import Register from './pages/Register';
-import Account from './pages/Account';
-import Contact from './pages/Contact';
-import About from './pages/About';
-import Services from './pages/Services';
-import PolicyPage from './pages/PolicyPage';
-import AdminLogin from './pages/AdminLogin';
-import AdminDashboard from './pages/AdminDashboard';
-import AdminCategories from './pages/admin/AdminCategories';
-import AdminProducts from './pages/admin/AdminProducts';
-import AdminBanners from './pages/admin/AdminBanners';
-import AdminPromoCards from './pages/admin/AdminPromoCards';
-import AdminVideos from './pages/admin/AdminVideos';
-import AdminOrders from './pages/admin/AdminOrders';
-import AdminCustomers from './pages/admin/AdminCustomers';
-import AdminEnquiries from './pages/admin/AdminEnquiries';
-import AdminOffers from './pages/admin/AdminOffers';
-import AdminSettings from './pages/admin/AdminSettings';
-import AdminPolicies from './pages/admin/AdminPolicies';
-import AdminChangePassword from './pages/admin/AdminChangePassword';
+const Home = lazy(() => import('./pages/Home'));
+const Products = lazy(() => import('./pages/Products'));
+const ProductDetailsPage = lazy(() => import('./pages/ProductDetails'));
+const Cart = lazy(() => import('./pages/Cart'));
+const Checkout = lazy(() => import('./pages/Checkout'));
+const WishlistPage = lazy(() => import('./pages/Wishlist'));
+const Login = lazy(() => import('./pages/Login'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const Register = lazy(() => import('./pages/Register'));
+const Account = lazy(() => import('./pages/Account'));
+const Contact = lazy(() => import('./pages/Contact'));
+const About = lazy(() => import('./pages/About'));
+const Services = lazy(() => import('./pages/Services'));
+const PolicyPage = lazy(() => import('./pages/PolicyPage'));
+const AdminLogin = lazy(() => import('./pages/AdminLogin'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+const AdminCategories = lazy(() => import('./pages/admin/AdminCategories'));
+const AdminProducts = lazy(() => import('./pages/admin/AdminProducts'));
+const AdminBanners = lazy(() => import('./pages/admin/AdminBanners'));
+const AdminPromoCards = lazy(() => import('./pages/admin/AdminPromoCards'));
+const AdminVideos = lazy(() => import('./pages/admin/AdminVideos'));
+const AdminOrders = lazy(() => import('./pages/admin/AdminOrders'));
+const AdminCustomers = lazy(() => import('./pages/admin/AdminCustomers'));
+const AdminEnquiries = lazy(() => import('./pages/admin/AdminEnquiries'));
+const AdminOffers = lazy(() => import('./pages/admin/AdminOffers'));
+const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
+const AdminPolicies = lazy(() => import('./pages/admin/AdminPolicies'));
+const AdminChangePassword = lazy(() => import('./pages/admin/AdminChangePassword'));
 
 function ScrollToTop() {
   const { pathname, search } = useLocation();
@@ -94,6 +94,7 @@ function ApplicationShell() {
         <Header />
         <CategoryNav />
         <main className="flex-1">
+                  <Suspense fallback={<div role="status" className="flex min-h-64 items-center justify-center text-sm text-slate-600">Loading page…</div>}>
                   <Routes>
                     <Route path="/" element={<Home />} />
                     <Route path="/products" element={<Products />} />
@@ -131,6 +132,7 @@ function ApplicationShell() {
                     </Route>
                     <Route path="*" element={<Home />} />
                   </Routes>
+                  </Suspense>
         </main>
         <Footer />
         <WhatsAppButton />

@@ -148,7 +148,7 @@ const createPendingProductId = () => {
 };
 
 export default function AdminProducts() {
-  const { products, categories, saveProductBatch, updateProduct, deleteProduct, setAdminFormDirty } = useAdmin();
+  const { products, categories, saveProductBatch, updateProduct, deleteProduct, setAdminFormDirty, getPendingImportIds, rememberPendingImportIds, clearPendingImportIds } = useAdmin();
   const location = useLocation();
   const navigate = useNavigate();
   const [editing, setEditing] = useState(null);
@@ -166,7 +166,6 @@ export default function AdminProducts() {
   const [exporting, setExporting] = useState(false);
   const [savingProduct, setSavingProduct] = useState(false);
   const importInputRef = useRef(null);
-  const pendingProductImportRef = useRef(null);
   const restoredDraftRef = useRef(false);
 
   const productCategories = [...new Set(products.map((product) => product.category).filter(Boolean))].sort();
@@ -385,7 +384,7 @@ export default function AdminProducts() {
         const stored = JSON.parse(localStorage.getItem(PRODUCT_IMPORT_DRAFT_KEY) || 'null');
         if (stored?.fingerprint === sourceFingerprint && Array.isArray(stored.ids)) pendingImport = stored;
       } catch (storageError) { retryStorageAvailable = false; console.error('Could not restore product import IDs.', storageError); }
-      if (!pendingImport && pendingProductImportRef.current?.fingerprint === sourceFingerprint) pendingImport = pendingProductImportRef.current;
+      if (!pendingImport) pendingImport = getPendingImportIds('products', sourceFingerprint);
       const currentProducts = new Map(products.map((product) => [String(product.id), product]));
       let updated = 0;
       let added = 0;
@@ -403,13 +402,14 @@ export default function AdminProducts() {
         operationIds.push(operationId);
         return { id: operationId, product: newProduct };
       });
-      pendingProductImportRef.current = { fingerprint: sourceFingerprint, ids: operationIds };
-      try { localStorage.setItem(PRODUCT_IMPORT_DRAFT_KEY, JSON.stringify(pendingProductImportRef.current)); }
+      const pendingIds = { fingerprint: sourceFingerprint, ids: operationIds };
+      rememberPendingImportIds('products', pendingIds);
+      try { localStorage.setItem(PRODUCT_IMPORT_DRAFT_KEY, JSON.stringify(pendingIds)); }
       catch (storageError) { retryStorageAvailable = false; console.error('Could not persist product import IDs.', storageError); }
       if (!await saveProductBatch(operations)) {
         throw new Error(`Products were not saved to the database. Resolve the shared-store error and retry the same import.${retryStorageAvailable ? '' : ' Browser storage is unavailable, so retry in this tab before reloading; the IDs are retained in memory.'}`);
       }
-      pendingProductImportRef.current = null;
+      clearPendingImportIds('products', sourceFingerprint);
       try { localStorage.removeItem(PRODUCT_IMPORT_DRAFT_KEY); } catch (storageError) { console.error('Could not clear product import IDs.', storageError); }
       imported.forEach(({ id }) => {
         if (id && currentProducts.has(id)) updated += 1;

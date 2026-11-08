@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { products as seedProducts } from '../data/products';
 import { heroSlides as seedBanners, promoCards as seedPromoCards } from '../data/banners';
 import { defaultManagedCategories, normalizeCategoryId } from '../data/categories';
@@ -264,6 +264,7 @@ export function AdminProvider({ children }) {
   const lastSharedRevisionRef = useRef(0);
   const sharedStoreConflictRef = useRef(false);
   const pendingSharedDataRef = useRef(null);
+  const pendingImportIdsRef = useRef(new Map());
   const savingSharedDataRef = useRef(false);
   const savePromiseRef = useRef(Promise.resolve());
   const saveRetryTimeoutRef = useRef(null);
@@ -280,6 +281,15 @@ export function AdminProvider({ children }) {
   const authGenerationRef = useRef(0);
   const sharedStoreReadyRef = useRef(sharedStoreReady);
   sharedStoreReadyRef.current = sharedStoreReady;
+  const getPendingImportIds = useCallback((kind, fingerprint) => {
+    const pending = pendingImportIdsRef.current.get(kind);
+    return pending?.fingerprint === fingerprint ? pending : null;
+  }, []);
+  const rememberPendingImportIds = useCallback((kind, pending) => pendingImportIdsRef.current.set(kind, pending), []);
+  const clearPendingImportIds = useCallback((kind, fingerprint) => {
+    const pending = pendingImportIdsRef.current.get(kind);
+    if (pending?.fingerprint === fingerprint) pendingImportIdsRef.current.delete(kind);
+  }, []);
   const persistSharedDraft = (data) => {
     try {
       localStorage.setItem(SHARED_DRAFT_STORAGE_KEY, JSON.stringify({
@@ -1196,6 +1206,9 @@ export function AdminProvider({ children }) {
     sharedStoreError,
     sharedStoreConflict,
     adminFormDirty,
+    getPendingImportIds,
+    rememberPendingImportIds,
+    clearPendingImportIds,
   ]);
 
   return <AdminContext.Provider value={value}>{children}</AdminContext.Provider>;

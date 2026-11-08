@@ -17,7 +17,6 @@ import {
   ChevronUp,
   Download,
 } from 'lucide-react';
-import { jsPDF } from 'jspdf';
 import { useAuth } from '../context/AuthContext';
 import { useAdmin } from '../context/AdminContext';
 import { useWishlist } from '../context/WishlistContext';
@@ -44,7 +43,8 @@ const getSavedAddresses = (user) => {
 
 const invoiceAmount = (amount) => `INR ${Number(amount || 0).toLocaleString('en-IN')}`;
 
-function downloadInvoice(order, settings) {
+async function downloadInvoice(order, settings) {
+  const { jsPDF } = await import('jspdf');
   const pdf = new jsPDF();
   const pageWidth = pdf.internal.pageSize.getWidth();
   const margin = 16;
