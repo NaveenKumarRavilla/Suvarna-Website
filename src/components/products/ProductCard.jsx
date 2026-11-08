@@ -4,6 +4,7 @@ import useCart from '../../hooks/useCart';
 import { useWishlist } from '../../context/WishlistContext';
 import {
   calcDiscount,
+  FALLBACK_IMAGE,
   formatPrice,
   handleImgError,
   productEnquiryLink,
@@ -30,7 +31,7 @@ export default function ProductCard({ product }) {
       <div className="relative overflow-hidden border-b border-slate-200 bg-slate-50 p-2">
         <Link to={`/product/${product.id}`} aria-label={`View ${product.name}`} className="block overflow-hidden rounded-xl bg-white">
           <img
-            src={product.images?.[0] || product.image}
+            src={product.images?.[0] || product.image || FALLBACK_IMAGE}
             alt={product.name}
             loading="lazy"
             onError={handleImgError}

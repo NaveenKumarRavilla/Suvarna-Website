@@ -19,6 +19,7 @@ export default function ImageUpload({
   maximumWidth = null,
   maximumHeight = null,
   compact = false,
+  onUploadingChange,
 }) {
   const fileRef = useRef(null);
   const [error, setError] = useState('');
@@ -46,6 +47,7 @@ export default function ImageUpload({
     setError('');
 
     setUploading(true);
+    onUploadingChange?.(true);
     try {
       const dimensions = await getImageDimensions(files[0]);
       setImageMeta(dimensions);
@@ -82,6 +84,7 @@ export default function ImageUpload({
       setError(uploadError.message || 'Please choose a valid image file.');
     } finally {
       setUploading(false);
+      onUploadingChange?.(false);
     }
 
     e.target.value = '';

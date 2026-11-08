@@ -21,7 +21,7 @@ import { useAuth } from '../context/AuthContext';
 import { useAdmin } from '../context/AdminContext';
 import { useWishlist } from '../context/WishlistContext';
 import useCart from '../hooks/useCart';
-import { formatPrice, handleImgError } from '../utils/helpers';
+import { FALLBACK_IMAGE, formatPrice, handleImgError } from '../utils/helpers';
 import Button from '../components/common/Button';
 import OrderProductLink from '../components/common/OrderProductLink';
 import { StatusBadge, inputCls, labelCls } from '../components/admin/AdminForm';
@@ -404,7 +404,7 @@ export default function Account() {
                         {(o.items || []).map((item, index) => (
                           <li key={`${o.id}-${item.id || item.name || index}`} className="grid gap-3 px-4 py-4 sm:grid-cols-[76px_minmax(0,1fr)_auto] sm:items-center sm:px-5">
                             <OrderProductLink item={item} className="flex h-[76px] w-[76px] items-center justify-center overflow-hidden rounded-md bg-slate-50" aria-label={`View ${item.name || 'ordered product'}`}>
-                              {(item.image || item.images?.[0]) ? <img src={item.image || item.images?.[0]} alt={item.name || ''} onError={handleImgError} className="h-full w-full object-contain p-1" /> : <Package size={26} className="text-slate-300" />}
+                              <img src={item.image || item.images?.[0] || FALLBACK_IMAGE} alt={item.name || ''} onError={handleImgError} className="h-full w-full object-contain p-1" />
                             </OrderProductLink>
                             <div className="min-w-0">
                               <OrderProductLink item={item} className="line-clamp-2 text-sm font-semibold text-primary hover:text-secondary">{item.name || 'Product'}</OrderProductLink>
@@ -489,7 +489,7 @@ export default function Account() {
                       <div className="relative">
                         <Link to={`/product/${product.id}`}> 
                           <img
-                            src={product.images?.[0] || product.image}
+                            src={product.images?.[0] || product.image || FALLBACK_IMAGE}
                             alt={product.name}
                             onError={handleImgError}
                             className="aspect-[4/3] w-full bg-white object-contain p-2"

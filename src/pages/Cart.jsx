@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Minus, Plus, ShoppingCart, Trash2, ShieldCheck } from 'lucide-react';
 import useCart from '../hooks/useCart';
-import { formatPrice, handleImgError } from '../utils/helpers';
+import { FALLBACK_IMAGE, formatPrice, handleImgError } from '../utils/helpers';
 import Button from '../components/common/Button';
 
 export default function Cart() {
@@ -76,7 +76,7 @@ export default function Cart() {
             >
               <Link to={`/product/${item.id}`} className="shrink-0">
                 <img
-                  src={item.image}
+                  src={item.image || FALLBACK_IMAGE}
                   alt={item.name}
                   loading="lazy"
                   onError={handleImgError}

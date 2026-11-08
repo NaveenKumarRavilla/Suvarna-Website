@@ -2,7 +2,7 @@ import { Heart, ShoppingCart, Trash2, Plus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import useCart from '../hooks/useCart';
 import { useWishlist } from '../context/WishlistContext';
-import { formatPrice, handleImgError } from '../utils/helpers';
+import { FALLBACK_IMAGE, formatPrice, handleImgError } from '../utils/helpers';
 
 export default function WishlistPage() {
   const { items, removeItem, clearWishlist } = useWishlist();
@@ -59,7 +59,7 @@ export default function WishlistPage() {
               <div className="relative">
                 <Link to={`/product/${product.id}`}> 
                   <img
-                    src={product.images?.[0] || product.image}
+                    src={product.images?.[0] || product.image || FALLBACK_IMAGE}
                     alt={product.name}
                     onError={handleImgError}
                     className="aspect-[4/3] w-full bg-white object-contain p-2"

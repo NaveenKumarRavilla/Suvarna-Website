@@ -25,6 +25,7 @@ import ProductGrid from './ProductGrid';
 import SectionHeader from '../common/SectionHeader';
 import {
   calcDiscount,
+  FALLBACK_IMAGE,
   formatPrice,
   handleImgError,
   productEnquiryLink,
@@ -151,7 +152,7 @@ export default function ProductDetails({ product, related }) {
           <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-3 shadow-card">
             <div className="overflow-hidden rounded-xl bg-white">
               <img
-                src={galleryImages[activeImage] || product.image}
+                src={galleryImages[activeImage] || product.image || FALLBACK_IMAGE}
                 alt={`${product.name} - image ${activeImage + 1}`}
                 onError={handleImgError}
                 className="aspect-[4/3] w-full rounded-xl bg-white object-contain p-3 transition-transform duration-500 group-hover:scale-[1.02]"

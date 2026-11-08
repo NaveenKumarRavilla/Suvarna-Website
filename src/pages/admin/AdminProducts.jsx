@@ -29,7 +29,7 @@ const inlineInputCls = 'w-full rounded-md border border-slate-200 bg-white px-2 
 const toSpecKey = (key) => key.trim().toLowerCase().replace(/[^a-z0-9]+(.)?/g, (_, char) => char ? char.toUpperCase() : '');
 const productCsvHeaders = [
   'id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'featured',
-  'description', 'warranty', 'image', 'images', 'specs',
+  'description', 'warranty', 'image', 'images', 'clearImages', 'specs',
   'calculatedRating', 'calculatedReviewCount', 'customerReviewsExportOnly',
 ];
 const calculatedProductFields = new Set([
@@ -56,7 +56,7 @@ const parseProductCsv = (text) => {
     id: 'id', productid: 'id', name: 'name', productname: 'name', brand: 'brand', productbrand: 'brand',
     category: 'category', productcategory: 'category', price: 'price', productprice: 'price',
     oldprice: 'oldPrice', stock: 'stock', featured: 'featured', description: 'description',
-    warranty: 'warranty', image: 'image', images: 'images', specs: 'specs',
+    warranty: 'warranty', image: 'image', images: 'images', clearimages: 'clearImages', specs: 'specs',
     rating: 'rating', reviews: 'reviews',
     calculatedrating: 'calculatedRating', averagerating: 'calculatedRating',
     calculatedreviewcount: 'calculatedReviewCount', reviewcount: 'calculatedReviewCount',
@@ -90,7 +90,15 @@ const parseProductCsv = (text) => {
     if (!Number.isFinite(price) || price <= 0) throw new Error(`Row ${rowNumber}: price must be a positive number.`);
     if (!Number.isFinite(oldPrice) || oldPrice <= 0) throw new Error(`Row ${rowNumber}: oldPrice must be a positive number.`);
 
-    const images = Object.hasOwn(record, 'images') ? parseJsonCell(record.images, 'images', rowNumber, []) : undefined;
+    const hasImage = Object.hasOwn(record, 'image') && record.image.trim() !== '';
+    const images = Object.hasOwn(record, 'images') && record.images.trim() !== ''
+      ? parseJsonCell(record.images, 'images', rowNumber, [])
+      : undefined;
+    const clearImagesValue = (record.clearImages || '').trim().toLowerCase();
+    if (clearImagesValue && !['true', 'false', '1', '0', 'yes', 'no'].includes(clearImagesValue)) {
+      throw new Error(`Row ${rowNumber}: clearImages must be true or false.`);
+    }
+    const clearImages = ['true', '1', 'yes'].includes(clearImagesValue);
     const specs = Object.hasOwn(record, 'specs') ? parseJsonCell(record.specs, 'specs', rowNumber, {}) : undefined;
     if (!Array.isArray(images) || images.some((image) => typeof image !== 'string')) {
       if (images !== undefined) throw new Error(`Row ${rowNumber}: images must be a JSON array of strings.`);
@@ -109,13 +117,20 @@ const parseProductCsv = (text) => {
     if (Object.hasOwn(record, 'featured')) product.featured = ['true', '1', 'yes'].includes(featuredValue);
     if (Object.hasOwn(record, 'description')) product.description = record.description;
     if (Object.hasOwn(record, 'warranty')) product.warranty = record.warranty;
-    if (Object.hasOwn(record, 'image')) product.image = record.image || '';
-    if (images !== undefined) product.images = images;
-    if (!Object.hasOwn(record, 'image') && images !== undefined) product.image = images[0] || '';
+    if (clearImages) {
+      product.image = '';
+      product.images = [];
+    } else if (images?.length) {
+      product.images = images;
+      product.image = images[0];
+    } else if (hasImage) {
+      product.image = record.image.trim();
+      product.images = [product.image];
+    }
     if (specs !== undefined) product.specs = specs;
     for (const [field, value] of Object.entries(record)) {
       if (
-        ['id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'featured', 'description', 'warranty', 'image', 'images', 'specs']
+        ['id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'featured', 'description', 'warranty', 'image', 'images', 'clearImages', 'specs']
           .includes(field) ||
         calculatedProductFields.has(field)
       ) continue;
@@ -126,10 +141,13 @@ const parseProductCsv = (text) => {
         product[field] = value;
       }
     }
+    const fields = new Set(Object.keys(record).filter((field) => !calculatedProductFields.has(field)));
+    if (Object.hasOwn(product, 'image')) fields.add('image');
+    if (Object.hasOwn(product, 'images')) fields.add('images');
     return {
       id,
       product,
-      fields: new Set(Object.keys(record).filter((field) => !calculatedProductFields.has(field))),
+      fields,
     };
   });
 };
@@ -166,6 +184,7 @@ export default function AdminProducts() {
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [savingProduct, setSavingProduct] = useState(false);
+  const [uploadingProductImage, setUploadingProductImage] = useState(false);
   const importInputRef = useRef(null);
   const restoredDraftRef = useRef(false);
 
@@ -280,6 +299,10 @@ export default function AdminProducts() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (uploadingProductImage) {
+      setFormError('Wait for the product image upload to finish before saving.');
+      return;
+    }
     if (editing) {
       const current = products.find((product) => String(product.id) === String(editing.id));
       if (!current || JSON.stringify(current) !== editBase) {
@@ -450,7 +473,7 @@ export default function AdminProducts() {
         }
       />
 
-      <p className="mb-4 text-xs text-slate-500">Import merges rows by product ID; matching IDs update supplied product fields, and new products receive generated IDs. Export includes product fields, image data, specifications, and customer reviews. Calculated rating, review count, and customer reviews are export-only and ignored during import.</p>
+      <p className="mb-4 text-xs text-slate-500">Import merges rows by product ID; matching IDs update supplied product fields, and new products receive generated IDs. Blank image fields preserve existing images; set clearImages to TRUE to remove them. Products can be saved without images and use a display placeholder. Export includes product fields, image data, specifications, and customer reviews. Calculated rating, review count, and customer reviews are export-only and ignored during import.</p>
       {importError && <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{importError}</p>}
       {importStatus && <p role="status" className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{importStatus}</p>}
 
@@ -523,9 +546,9 @@ export default function AdminProducts() {
 
             <div className="grid gap-4 xl:grid-cols-2">
               <section className="rounded-xl border border-slate-200 p-3"><Field label="Description"><textarea value={form.description} onChange={set('description')} rows="3" className={inputCls} placeholder="Describe the product, its use cases, and key benefits." /></Field></section>
-              <section className="rounded-xl border border-slate-200 p-3"><h3 className="mb-2 text-sm font-bold text-primary">Product Images</h3><ImageUpload label="Add Image" value={form.images} multiple compact recommendedWidth={1200} recommendedHeight={1200} minimumWidth={600} minimumHeight={600} maximumWidth={2000} maximumHeight={2000} onChange={(value) => setForm((current) => ({ ...current, images: value }))} /></section>
+              <section className="rounded-xl border border-slate-200 p-3"><h3 className="mb-2 text-sm font-bold text-primary">Product Images</h3><ImageUpload label="Add Image" value={form.images} multiple compact recommendedWidth={1200} recommendedHeight={1200} minimumWidth={600} minimumHeight={600} maximumWidth={2000} maximumHeight={2000} onUploadingChange={setUploadingProductImage} onChange={(value) => setForm((current) => ({ ...current, images: value }))} /></section>
             </div>
-            <div className="flex flex-wrap gap-3 border-t border-slate-100 pt-5"><Button type="submit" variant="primary" disabled={savingProduct}>{savingProduct ? 'Saving…' : editing ? 'Save Changes' : 'Add Product'}</Button><Button type="button" variant="ghost" onClick={() => closeForm()} disabled={savingProduct}>Cancel</Button></div>
+            <div className="flex flex-wrap gap-3 border-t border-slate-100 pt-5"><Button type="submit" variant="primary" disabled={savingProduct || uploadingProductImage}>{uploadingProductImage ? 'Uploading image…' : savingProduct ? 'Saving…' : editing ? 'Save Changes' : 'Add Product'}</Button><Button type="button" variant="ghost" onClick={() => closeForm()} disabled={savingProduct || uploadingProductImage}>Cancel</Button></div>
           </form>
         </section>
       )}

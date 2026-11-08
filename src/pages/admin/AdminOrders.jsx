@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ExternalLink, Search } from 'lucide-react';
 import OrderProductLink from '../../components/common/OrderProductLink';
 import { useAdmin } from '../../context/AdminContext';
-import { formatPrice } from '../../utils/helpers';
+import { FALLBACK_IMAGE, formatPrice, handleImgError } from '../../utils/helpers';
 import { PageHeader, tableWrap, tableCls, thCls, tdCls, inputCls } from '../../components/admin/AdminForm';
 
 const statuses = ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'];
@@ -93,9 +93,7 @@ export default function AdminOrders() {
                           aria-label={`Open product ${item.name || 'details'} in storefront`}
                         >
                           <span className="h-7 w-7 overflow-hidden rounded bg-white shadow-sm">
-                            {(item.image || item.images?.[0]) && (
-                              <img src={item.image || item.images?.[0]} alt="" className="h-full w-full object-cover" />
-                            )}
+                            <img src={item.image || item.images?.[0] || FALLBACK_IMAGE} alt="" onError={handleImgError} className="h-full w-full object-cover" />
                           </span>
                           <span className="min-w-0">
                             <span className="block truncate text-xs font-semibold text-primary">{item.name || 'Product'}</span>
