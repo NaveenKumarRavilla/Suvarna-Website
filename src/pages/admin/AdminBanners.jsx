@@ -6,6 +6,7 @@ import ImageUpload from '../../components/admin/ImageUpload';
 import { uploadMediaFile, validateVideoDuration } from '../../utils/media';
 import { downloadCsv, parseCsv } from '../../utils/csv';
 import { createClientRecordId } from '../../utils/recordId';
+import { fingerprintText } from '../../utils/textFingerprint';
 import {
   Modal,
   Field,
@@ -98,6 +99,7 @@ export default function AdminBanners() {
   const [savingBanner, setSavingBanner] = useState(false);
   const [resetNotice, setResetNotice] = useState('');
   const importInputRef = useRef(null);
+  const pendingBannerImportRef = useRef(null);
   const restoredDraftRef = useRef(false);
 
   useEffect(() => () => setAdminFormDirty(false), [setAdminFormDirty]);
@@ -276,18 +278,21 @@ export default function AdminBanners() {
     setImporting(true);
     setImportError('');
     setImportStatus('');
+    let retryStorageAvailable = true;
     try {
       const sourceText = await file.text();
+      const sourceFingerprint = await fingerprintText(sourceText);
       const imported = parseBannerCsv(sourceText);
       let pendingImport = null;
       try {
         const stored = JSON.parse(localStorage.getItem(BANNER_IMPORT_DRAFT_KEY) || 'null');
-        if (stored?.sourceText === sourceText && Array.isArray(stored.ids)) pendingImport = stored;
-      } catch (storageError) { console.error('Could not restore banner import IDs.', storageError); }
+        if (stored?.fingerprint === sourceFingerprint && Array.isArray(stored.ids)) pendingImport = stored;
+      } catch (storageError) { retryStorageAvailable = false; console.error('Could not restore banner import IDs.', storageError); }
+      if (!pendingImport && pendingBannerImportRef.current?.fingerprint === sourceFingerprint) pendingImport = pendingBannerImportRef.current;
       const existingBanners = new Map(banners.map((banner) => [String(banner.id), banner]));
       const plans = imported.map(({ id, banner }, rowIndex) => {
         const existing = id ? existingBanners.get(id) : null;
-        if (existing) return { existing, banner, operationId: existing.id };
+        if (existing) return { existing, banner, operationId: pendingImport?.ids?.[rowIndex] || existing.id };
         const newBanner = { ...emptyForm, ...banner, gradient: banner.gradient || gradients[0].value };
         const mediaType = banner.mediaType || (newBanner.video ? 'video' : 'image');
         newBanner.mediaType = mediaType;
@@ -302,18 +307,21 @@ export default function AdminBanners() {
         id: operationId,
         banner,
       }));
-      localStorage.setItem(BANNER_IMPORT_DRAFT_KEY, JSON.stringify({ sourceText, ids: plans.map(({ operationId }) => operationId) }));
+      pendingBannerImportRef.current = { fingerprint: sourceFingerprint, ids: plans.map(({ operationId }) => operationId) };
+      try { localStorage.setItem(BANNER_IMPORT_DRAFT_KEY, JSON.stringify(pendingBannerImportRef.current)); }
+      catch (storageError) { retryStorageAvailable = false; console.error('Could not persist banner import IDs.', storageError); }
       if (!await saveBannerBatch(operations)) {
-        throw new Error('Banners were not saved to the database. Resolve the shared-store error and retry the import.');
+        throw new Error(`Banners were not saved to the database. Resolve the shared-store error and retry the same import.${retryStorageAvailable ? '' : ' Browser storage is unavailable, so retry in this tab before reloading; the IDs are retained in memory.'}`);
       }
-      localStorage.removeItem(BANNER_IMPORT_DRAFT_KEY);
+      pendingBannerImportRef.current = null;
+      try { localStorage.removeItem(BANNER_IMPORT_DRAFT_KEY); } catch (storageError) { console.error('Could not clear banner import IDs.', storageError); }
       plans.forEach(({ existing }) => {
         if (existing) updated += 1;
         else added += 1;
       });
       setImportStatus(`Imported ${imported.length} banner${imported.length === 1 ? '' : 's'}: ${added} added, ${updated} updated.`);
     } catch (error) {
-      setImportError(error.message || 'The selected CSV file could not be imported.');
+      setImportError(error.message || `The selected CSV file could not be imported.${retryStorageAvailable ? '' : ' Browser storage is unavailable; retry this same file in this tab before reloading.'}`);
     } finally {
       setImporting(false);
     }

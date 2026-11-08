@@ -7,6 +7,7 @@ import { formatPrice } from '../../utils/helpers';
 import { isPublishableProduct } from '../../utils/productQuality';
 import { downloadCsv, parseCsv } from '../../utils/csv';
 import { apiRequest } from '../../utils/api';
+import { fingerprintText } from '../../utils/textFingerprint';
 import Button from '../../components/common/Button';
 import ImageUpload from '../../components/admin/ImageUpload';
 import { Field, PageHeader, inputCls, tableWrap, tableCls, thCls, tdCls } from '../../components/admin/AdminForm';
@@ -165,6 +166,7 @@ export default function AdminProducts() {
   const [exporting, setExporting] = useState(false);
   const [savingProduct, setSavingProduct] = useState(false);
   const importInputRef = useRef(null);
+  const pendingProductImportRef = useRef(null);
   const restoredDraftRef = useRef(false);
 
   const productCategories = [...new Set(products.map((product) => product.category).filter(Boolean))].sort();
@@ -372,14 +374,18 @@ export default function AdminProducts() {
     setImporting(true);
     setImportError('');
     setImportStatus('');
+    let retryStorageAvailable = true;
+    let sourceFingerprint = '';
     try {
       const sourceText = await file.text();
+      sourceFingerprint = await fingerprintText(sourceText);
       const imported = parseProductCsv(sourceText);
       let pendingImport = null;
       try {
         const stored = JSON.parse(localStorage.getItem(PRODUCT_IMPORT_DRAFT_KEY) || 'null');
-        if (stored?.sourceText === sourceText && Array.isArray(stored.ids)) pendingImport = stored;
-      } catch (storageError) { console.error('Could not restore product import IDs.', storageError); }
+        if (stored?.fingerprint === sourceFingerprint && Array.isArray(stored.ids)) pendingImport = stored;
+      } catch (storageError) { retryStorageAvailable = false; console.error('Could not restore product import IDs.', storageError); }
+      if (!pendingImport && pendingProductImportRef.current?.fingerprint === sourceFingerprint) pendingImport = pendingProductImportRef.current;
       const currentProducts = new Map(products.map((product) => [String(product.id), product]));
       let updated = 0;
       let added = 0;
@@ -397,18 +403,21 @@ export default function AdminProducts() {
         operationIds.push(operationId);
         return { id: operationId, product: newProduct };
       });
-      localStorage.setItem(PRODUCT_IMPORT_DRAFT_KEY, JSON.stringify({ sourceText, ids: operationIds }));
+      pendingProductImportRef.current = { fingerprint: sourceFingerprint, ids: operationIds };
+      try { localStorage.setItem(PRODUCT_IMPORT_DRAFT_KEY, JSON.stringify(pendingProductImportRef.current)); }
+      catch (storageError) { retryStorageAvailable = false; console.error('Could not persist product import IDs.', storageError); }
       if (!await saveProductBatch(operations)) {
-        throw new Error('Products were not saved to the database. Resolve the shared-store error and retry the import.');
+        throw new Error(`Products were not saved to the database. Resolve the shared-store error and retry the same import.${retryStorageAvailable ? '' : ' Browser storage is unavailable, so retry in this tab before reloading; the IDs are retained in memory.'}`);
       }
-      localStorage.removeItem(PRODUCT_IMPORT_DRAFT_KEY);
+      pendingProductImportRef.current = null;
+      try { localStorage.removeItem(PRODUCT_IMPORT_DRAFT_KEY); } catch (storageError) { console.error('Could not clear product import IDs.', storageError); }
       imported.forEach(({ id }) => {
         if (id && currentProducts.has(id)) updated += 1;
         else added += 1;
       });
       setImportStatus(`Imported ${imported.length} product${imported.length === 1 ? '' : 's'}: ${added} added, ${updated} updated.`);
     } catch (error) {
-      setImportError(error.message || 'The selected CSV file could not be imported.');
+      setImportError(error.message || `The selected CSV file could not be imported.${retryStorageAvailable ? '' : ' Browser storage is unavailable; retry this same file in this tab before reloading.'}`);
     } finally {
       setImporting(false);
     }
