@@ -1220,9 +1220,24 @@ function createOrderIdempotently(PDO $pdo, array $input): array
         throw new ApiException(422, 'The selected payment method is not available.');
     }
 
-    $customer = cleanText($input['customer'] ?? '', 160) ?: 'Guest';
+    $customer = cleanText($input['customer'] ?? '', 160);
     $phone = cleanText($input['phone'] ?? '', 40);
     $shippingAddress = normalizeAddress($input['shippingAddress'] ?? []);
+    if ($customer === '') {
+        throw new ApiException(422, 'Enter the customer name before placing the order.');
+    }
+    if (!preg_match('/^\+?[0-9]{10,15}$/D', $phone)) {
+        throw new ApiException(422, 'Enter a valid mobile number with 10 to 15 digits.');
+    }
+    if (($shippingAddress['address'] ?? '') === '') {
+        throw new ApiException(422, 'Enter the delivery address before placing the order.');
+    }
+    if (($shippingAddress['city'] ?? '') === '') {
+        throw new ApiException(422, 'Enter the delivery city before placing the order.');
+    }
+    if (!preg_match('/^[0-9]{6}$/D', $shippingAddress['pin'] ?? '')) {
+        throw new ApiException(422, 'Enter a valid six-digit delivery PIN code.');
+    }
     $requestedItems = [];
     $seenProductIds = [];
 
