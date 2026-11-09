@@ -27,6 +27,7 @@ export default function ImageUpload({
   const [url, setUrl] = useState('');
   const [imageMeta, setImageMeta] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const uploadingRef = useRef(false);
 
   const previewImages = Array.isArray(value) ? value : value ? [value] : [];
   const isDataUrl = typeof value === 'string' && value.startsWith('data:');
@@ -42,10 +43,15 @@ export default function ImageUpload({
   }, [value, isDataUrl, multiple]);
 
   const handleFile = async (e) => {
+    if (uploadingRef.current) {
+      e.target.value = '';
+      return;
+    }
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     setError('');
 
+    uploadingRef.current = true;
     setUploading(true);
     onUploadingChange?.(true);
     try {
@@ -83,6 +89,7 @@ export default function ImageUpload({
     } catch (uploadError) {
       setError(uploadError.message || 'Please choose a valid image file.');
     } finally {
+      uploadingRef.current = false;
       setUploading(false);
       onUploadingChange?.(false);
     }
@@ -91,6 +98,7 @@ export default function ImageUpload({
   };
 
   const removeAt = (index) => {
+    if (uploadingRef.current) return;
     if (multiple) {
       const next = previewImages.filter((_, idx) => idx !== index);
       onChange(next);
@@ -100,6 +108,7 @@ export default function ImageUpload({
   };
 
   const applyUrl = () => {
+    if (uploadingRef.current) return;
     const cleaned = url.trim();
     if (!cleaned) return;
 
@@ -137,8 +146,9 @@ export default function ImageUpload({
             <button
               type="button"
               onClick={() => removeAt(idx)}
+              disabled={uploading}
               aria-label="Remove image"
-              className="absolute right-2 top-2 rounded-full bg-navy-900/70 p-1.5 text-white transition hover:bg-red-600"
+              className="absolute right-2 top-2 rounded-full bg-navy-900/70 p-1.5 text-white transition hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <X size={14} />
             </button>
@@ -149,7 +159,8 @@ export default function ImageUpload({
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            className={`flex w-full flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 text-slate-500 transition hover:border-secondary hover:text-secondary ${compact ? 'h-20' : 'h-28'}`}
+            disabled={uploading}
+            className={`flex w-full flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 text-slate-500 transition hover:border-secondary hover:text-secondary disabled:cursor-not-allowed disabled:opacity-50 ${compact ? 'h-20' : 'h-28'}`}
           >
             <UploadCloud size={20} />
             <span className="text-[11px] font-semibold">{uploading ? 'Uploading…' : 'Add image'}</span>
@@ -161,7 +172,8 @@ export default function ImageUpload({
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
-          className="flex h-36 w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 text-slate-500 transition hover:border-secondary hover:text-secondary"
+          disabled={uploading}
+          className="flex h-36 w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 text-slate-500 transition hover:border-secondary hover:text-secondary disabled:cursor-not-allowed disabled:opacity-50"
         >
           <UploadCloud size={26} />
           <span className="text-xs font-semibold">{uploading ? 'Uploading…' : 'Upload from device'}</span>
@@ -188,8 +200,11 @@ export default function ImageUpload({
       <div className="mt-2 flex items-center gap-2">
         <button
           type="button"
-          onClick={() => setShowUrl((s) => !s)}
-          className="flex items-center gap-1 text-xs font-medium text-secondary hover:underline"
+          onClick={() => {
+            if (!uploadingRef.current) setShowUrl((s) => !s);
+          }}
+          disabled={uploading}
+          className="flex items-center gap-1 text-xs font-medium text-secondary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Link2 size={12} />
           {showUrl ? 'Hide URL input' : 'Or paste image URL'}
@@ -198,7 +213,8 @@ export default function ImageUpload({
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            className="text-xs font-medium text-secondary hover:underline"
+            disabled={uploading}
+            className="text-xs font-medium text-secondary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
           >
             Replace
           </button>
@@ -210,14 +226,18 @@ export default function ImageUpload({
           <input
             type="url"
             value={isDataUrl ? '' : url}
-            onChange={(e) => setUrl(e.target.value)}
+            onChange={(e) => {
+              if (!uploadingRef.current) setUrl(e.target.value);
+            }}
+            disabled={uploading}
             placeholder="https://example.com/image.jpg"
             className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs outline-none focus:border-secondary"
           />
           <button
             type="button"
             onClick={applyUrl}
-            className="shrink-0 rounded-lg bg-secondary px-3 text-xs font-semibold text-white"
+            disabled={uploading}
+            className="shrink-0 rounded-lg bg-secondary px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             Apply
           </button>
