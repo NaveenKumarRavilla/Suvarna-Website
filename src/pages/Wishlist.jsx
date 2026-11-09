@@ -16,17 +16,19 @@ export default function WishlistPage() {
 
   const addAllToCart = () => {
     let added = 0;
+    let rejected = 0;
     items.forEach((savedProduct) => {
       const currentProduct = getAvailableWishlistProduct(savedProduct, productsById);
-      if (!currentProduct) return;
-      addItem(currentProduct, 1);
+      if (!currentProduct || !addItem(currentProduct, 1)) {
+        rejected += 1;
+        return;
+      }
       removeItem(savedProduct.id);
       added += 1;
     });
-    const remaining = items.length - added;
-    setCartNotice(remaining
-      ? `${added} item(s) added. ${remaining} unavailable or changed item(s) remain in your wishlist.`
-      : 'All available wishlist items were added to your cart.');
+    setCartNotice(rejected
+      ? `${added} item(s) moved to your cart. ${rejected} item(s) could not be added because they are unavailable or your cart limit was reached; they remain in your wishlist.`
+      : 'All available wishlist items were moved to your cart.');
   };
 
   return (
@@ -104,13 +106,18 @@ export default function WishlistPage() {
                     type="button"
                     onClick={() => {
                       if (!availableProduct) return;
-                      addItem(availableProduct, 1);
-                      removeItem(product.id);
+                      const added = addItem(availableProduct, 1);
+                      if (added) {
+                        removeItem(product.id);
+                        setCartNotice(`${product.name} moved to your cart.`);
+                      } else {
+                        setCartNotice(`${product.name} could not be added because it is unavailable or the cart limit was reached. It remains in your wishlist.`);
+                      }
                     }}
                     disabled={!availableProduct}
                     className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-white transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <ShoppingCart size={14} /> Add to Cart
+                    <ShoppingCart size={14} /> Move to Cart
                   </button>
                   <button
                     type="button"

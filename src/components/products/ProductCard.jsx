@@ -139,7 +139,7 @@ export default function ProductCard({ product }) {
             className="flex h-10 w-full items-center justify-center gap-1 rounded-lg bg-accent px-2 py-2 text-[11px] font-bold leading-tight text-navy-900 transition hover:bg-accent-dark hover:text-white disabled:cursor-not-allowed disabled:opacity-40 sm:h-auto sm:flex-1 sm:text-xs"
           >
             <Zap size={13} />
-            Buy Now
+            Add and go to checkout
           </button>
           <a
             href={productEnquiryLink(product)}

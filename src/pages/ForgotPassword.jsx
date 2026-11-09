@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Chrome, KeyRound, Mail } from 'lucide-react';
 import Button from '../components/common/Button';
@@ -12,7 +12,7 @@ const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 export default function ForgotPassword() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { loginWithGoogle, setPasswordForRecovery, googleReady, googleLoadError } = useAuth();
+  const { loginWithGoogle, setPasswordForRecovery, requestPasswordRecovery, googleReady, googleLoadError } = useAuth();
   const [email, setEmail] = useState(searchParams.get('email') || '');
   const [verifiedEmail, setVerifiedEmail] = useState('');
   const [recoveryToken, setRecoveryToken] = useState('');
@@ -21,6 +21,15 @@ export default function ForgotPassword() {
   const [error, setError] = useState('');
   const [googleLoading, setGoogleLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
+
+  useEffect(() => {
+    const token = searchParams.get('token');
+    if (!token) return;
+    setRecoveryToken(token);
+    setVerifiedEmail('your email');
+  }, [searchParams]);
 
   const handleGoogleVerification = async () => {
     const requestedEmail = normalizeEmail(email);
@@ -47,6 +56,23 @@ export default function ForgotPassword() {
     setRecoveryToken(result.recoveryToken);
     setVerifiedEmail(requestedEmail);
     setError('');
+  };
+
+  const handleEmailRecovery = async () => {
+    const requestedEmail = normalizeEmail(email);
+    if (!requestedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(requestedEmail)) {
+      setError('Enter a valid account email address.');
+      return;
+    }
+    setError('');
+    setEmailLoading(true);
+    const result = await requestPasswordRecovery(requestedEmail);
+    setEmailLoading(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setEmailSent(true);
   };
 
   const handleSetPassword = async (event) => {
@@ -117,13 +143,17 @@ export default function ForgotPassword() {
             </Button>
             {googleLoadError && <p role="alert" className="text-xs font-medium text-red-600">{googleLoadError}</p>}
             <p className="text-xs leading-relaxed text-slate-500">
-              This app does not send password reset emails. If the account email is not a Google account you can verify, contact the store administrator for help.
+              {emailSent ? 'If an account exists for that email, a password reset link has been sent. Check your inbox and spam folder.' : 'You can verify with Google or request a one-time password reset link by email.'}
             </p>
+            <Button type="button" variant="outline" size="lg" className="w-full" onClick={handleEmailRecovery} disabled={emailLoading}>
+              <Mail size={18} />{emailLoading ? 'Sending reset link...' : 'Email me a reset link'}
+            </Button>
+            <p className="text-center text-xs text-slate-500">Need help? <a href="mailto:sales@suvarnait.com" className="font-semibold text-secondary hover:underline">Email Suvarna support</a></p>
           </div>
         ) : (
           <form onSubmit={handleSetPassword} className="mt-7 space-y-4">
             <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
-              Google verified {verifiedEmail}. Your new password will also work for this account.
+              {searchParams.get('token') ? 'Email verification complete.' : `Google verified ${verifiedEmail}.`} Your new password will also work for this account.
             </p>
             <div>
               <label htmlFor="new-password" className="mb-1.5 block text-xs font-semibold text-slate-600">

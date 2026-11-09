@@ -111,7 +111,7 @@ export default function AdminVideos() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => deleteVideo(v.id)}
+                      onClick={async () => { if (!window.confirm(`Delete the "${v.title}" video?`)) return; const deleted = await deleteVideo(v.id); if (!deleted) setSaveError('Video was not deleted because the database could not confirm the change.'); }}
                       aria-label={`Delete ${v.title}`}
                       className="rounded-lg p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
                     >

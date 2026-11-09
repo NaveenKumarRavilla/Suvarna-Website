@@ -7,4 +7,5 @@ return [
     'master_admin_email' => 'enterprisessuvarnait@gmail.com',
     'admin_setup_key' => 'replace-with-a-long-random-one-time-setup-key',
     'google_client_id' => 'your-google-oauth-client-id',
+    'recovery_from_email' => 'noreply@suvarnaitenterprises.com',
 ];

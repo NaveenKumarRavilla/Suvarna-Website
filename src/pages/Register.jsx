@@ -24,12 +24,17 @@ export default function Register() {
     const phone = form.phone.value;
     const password = form.password.value;
     const confirm = form.confirm.value;
+    const digits = phone.replace(/\D/g, '');
+    if (!/^[+0-9 ().-]+$/.test(phone.trim()) || digits.length < 10 || digits.length > 15) {
+      setError('Enter a valid mobile number with 10 to 15 digits.');
+      return;
+    }
     if (password !== confirm) {
       setError('Passwords do not match.');
       return;
     }
     setSubmitting(true);
-    const res = await register({ name, email, phone, password });
+    const res = await register({ name, email, phone: digits, password });
     setSubmitting(false);
     if (res.ok) navigate('/account');
     else setError(res.error);
@@ -95,7 +100,7 @@ export default function Register() {
                 name="phone"
                 type="tel"
                 required
-                pattern="[+0-9 -]{10,15}"
+                pattern="[+0-9 ().-]{10,24}"
                 placeholder="+91 98765 43210"
                 className={inputCls}
               />

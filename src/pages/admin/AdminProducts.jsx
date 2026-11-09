@@ -266,6 +266,7 @@ export default function AdminProducts() {
   const [uploadingProductImage, setUploadingProductImage] = useState(false);
   const importInputRef = useRef(null);
   const restoredDraftRef = useRef(false);
+  const initialFormRef = useRef(JSON.stringify(emptyForm()));
   const uploadingProductImageRef = useRef(false);
   const formSessionRef = useRef(formSession);
   formSessionRef.current = formSession;
@@ -303,26 +304,32 @@ export default function AdminProducts() {
 
   const openAdd = () => {
     if (uploadingProductImageRef.current) return;
+    if (formOpen && JSON.stringify(form) !== initialFormRef.current && !window.confirm('Discard the unsaved product draft and open another product form?')) return;
+    const nextForm = emptyForm();
+    initialFormRef.current = JSON.stringify(nextForm);
     setFormSession((session) => session + 1);
-    setEditing(null); setEditBase(null); setPendingCreateId(null); setFormMode('add'); setForm(emptyForm()); setFormError(''); setAdminFormDirty(true); setFormOpen(true);
+    setEditing(null); setEditBase(null); setPendingCreateId(null); setFormMode('add'); setForm(nextForm); setFormError(''); setAdminFormDirty(true); setFormOpen(true);
   };
   const openEdit = (product, clone = false) => {
     if (uploadingProductImageRef.current) return;
+    if (formOpen && JSON.stringify(form) !== initialFormRef.current && !window.confirm('Discard the unsaved product draft and open another product form?')) return;
     setFormSession((session) => session + 1);
     const productImages = Array.isArray(product.images) && product.images.length ? product.images : product.image ? [product.image] : [];
     const configuration = Object.entries(product.specs || {}).map(([key, value]) => ({ key, value: String(value || '') }));
+    const nextForm = {
+      name: clone ? `Copy of ${product.name || ''}` : product.name || '',
+      sku: clone ? '' : product.sku || product.productCode || '',
+      brand: product.brand || '', category: product.category || 'laptops', price: product.price || '', oldPrice: product.oldPrice || '', stock: product.stock || 'In Stock', stockQuantity: product.stockQuantity == null ? '' : String(product.stockQuantity), images: productImages,
+      configuration: configuration.length ? configuration : blankConfiguration(), featured: clone ? false : !!product.featured, description: product.description || '', ...warrantyFormValues(product.warranty),
+    };
+    initialFormRef.current = JSON.stringify(nextForm);
     setEditing(clone ? null : product);
     setEditBase(clone ? null : JSON.stringify(product));
     setPendingCreateId(null);
     setFormMode(clone ? 'clone' : 'edit');
     setFormError('');
     setAdminFormDirty(true);
-    setForm({
-      name: clone ? `Copy of ${product.name || ''}` : product.name || '',
-      sku: clone ? '' : product.sku || product.productCode || '',
-      brand: product.brand || '', category: product.category || 'laptops', price: product.price || '', oldPrice: product.oldPrice || '', stock: product.stock || 'In Stock', stockQuantity: product.stockQuantity == null ? '' : String(product.stockQuantity), images: productImages,
-      configuration: configuration.length ? configuration : blankConfiguration(), featured: clone ? false : !!product.featured, description: product.description || '', ...warrantyFormValues(product.warranty),
-    });
+    setForm(nextForm);
     setFormOpen(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -351,6 +358,7 @@ export default function AdminProducts() {
       setFormMode(isEditing ? 'edit' : draft.mode === 'clone' ? 'clone' : 'add');
       setFormSession((session) => session + 1);
       setForm({ ...emptyForm(), ...draft.form });
+      initialFormRef.current = JSON.stringify(emptyForm());
       setFormError('Recovered an unsaved product form from this browser.');
       setFormOpen(true);
       setAdminFormDirty(true);
@@ -816,7 +824,7 @@ export default function AdminProducts() {
                     {stockOptions.map((status) => <option key={status}>{status}</option>)}
                   </select>
                 </td>
-                <td className={tdCls}><span className="flex gap-1"><button type="button" onClick={() => openEdit(product)} disabled={uploadingProductImage} aria-label={`Edit ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary disabled:cursor-not-allowed disabled:opacity-50"><Pencil size={15} /></button><button type="button" onClick={() => openEdit(product, true)} disabled={uploadingProductImage} aria-label={`Clone ${product.name}`} title="Clone product" className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary disabled:cursor-not-allowed disabled:opacity-50"><Copy size={15} /></button><button type="button" onClick={() => deleteProduct(product.id)} aria-label={`Delete ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></button></span></td>
+                <td className={tdCls}><span className="flex gap-1"><button type="button" onClick={() => openEdit(product)} disabled={uploadingProductImage} aria-label={`Edit ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary disabled:cursor-not-allowed disabled:opacity-50"><Pencil size={15} /></button><button type="button" onClick={() => openEdit(product, true)} disabled={uploadingProductImage} aria-label={`Clone ${product.name}`} title="Clone product" className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary disabled:cursor-not-allowed disabled:opacity-50"><Copy size={15} /></button><button type="button" onClick={async () => { if (!window.confirm(`Delete ${product.name}?`)) return; const deleted = await deleteProduct(product.id); if (!deleted) window.alert('Product was not deleted. It may be reserved by an order, or the database save failed.'); }} aria-label={`Delete ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></button></span></td>
               </tr>
             ))}
           </tbody>

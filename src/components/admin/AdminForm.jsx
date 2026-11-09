@@ -1,4 +1,4 @@
-import { cloneElement, isValidElement, useId } from 'react';
+import { cloneElement, isValidElement, useEffect, useId, useRef } from 'react';
 import { X } from 'lucide-react';
 
 export const inputCls =
@@ -21,12 +21,46 @@ export function Field({ label, children }) {
 }
 
 export function Modal({ title, onClose, children }) {
+  const titleId = useId();
+  const dialogRef = useRef(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const firstFocusable = dialog.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), a[href]');
+    (firstFocusable || dialog).focus();
+  }, []);
+
+  const handleKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = [...event.currentTarget.querySelectorAll('input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), a[href]')];
+    if (!focusable.length) {
+      event.preventDefault();
+      event.currentTarget.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !event.currentTarget.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !event.currentTarget.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div className="absolute inset-0 bg-navy-900/60 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
-      <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+      <div ref={dialogRef} tabIndex={-1} onKeyDown={handleKeyDown} className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-lg font-extrabold text-primary">{title}</h2>
+          <h2 id={titleId} className="text-lg font-extrabold text-primary">{title}</h2>
           <button
             type="button"
             onClick={onClose}

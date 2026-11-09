@@ -66,11 +66,13 @@ export default function AdminCategories() {
     setModalOpen(false);
   };
 
-  const handleDelete = (category, count) => {
+  const handleDelete = async (category, count) => {
     if (count > 0) return;
     if (!window.confirm(`Remove the "${category.label}" category?`)) return;
-    const removed = deleteCategory(category.id);
-    if (!removed) setError('This category now has products assigned to it and cannot be removed.');
+    const removed = await deleteCategory(category.id);
+    if (!removed) setError(products.some((product) => normalizeCategoryId(product.category) === category.id)
+      ? 'This category has products assigned to it and cannot be removed.'
+      : 'Category was not deleted because the database could not confirm the change.');
   };
 
   return (

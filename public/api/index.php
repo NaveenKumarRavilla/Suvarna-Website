@@ -567,9 +567,10 @@ try {
             $name = cleanText($input['name'] ?? '', 160);
             $phone = cleanText($input['phone'] ?? '', 40);
             $phoneDigits = preg_replace('/\D+/', '', $phone);
-            if ($name === '' || strlen($phoneDigits) < 10 || strlen($phoneDigits) > 15) {
+            if ($name === '' || !preg_match('/^[+0-9 ().-]+$/D', $phone) || strlen($phoneDigits) < 10 || strlen($phoneDigits) > 15) {
                 respond(422, ['error' => 'Name and phone number are required.']);
             }
+            $phone = $phoneDigits;
             $statement = $pdo->prepare('SELECT id FROM customers WHERE email = ? OR phone_digits = ? LIMIT 1');
             $statement->execute([$email, $phoneDigits]);
             if ($statement->fetch()) {
@@ -676,6 +677,34 @@ try {
             if (!in_array('email', $providers, true)) $providers[] = 'email';
             $statement = $pdo->prepare('UPDATE customers SET password_hash = ?, provider = ?, providers = ? WHERE email = ?');
             $statement->execute([password_hash($input['password'], PASSWORD_DEFAULT), 'email', json_encode($providers), $email]);
+            respond(200, ['ok' => true]);
+
+        case 'customer-password-recovery-request':
+            requireMethod('POST');
+            $input = readJson();
+            $email = normalizeEmail($input['email'] ?? '');
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                respond(422, ['error' => 'Enter a valid account email address.']);
+            }
+            $statement = $pdo->prepare('SELECT email FROM customers WHERE email = ? LIMIT 1');
+            $statement->execute([$email]);
+            if ($statement->fetchColumn()) {
+                $recent = $pdo->prepare('SELECT 1 FROM customer_password_recovery_tokens WHERE email = ? AND created_at > DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 1 MINUTE) LIMIT 1');
+                $recent->execute([$email]);
+                if (!$recent->fetchColumn()) {
+                    $token = mintCustomerPasswordRecoveryToken($pdo, $email);
+                    $resetUrl = 'https://suvarnaitenterprises.com/forgot-password?token=' . rawurlencode($token);
+                    $fromEmail = normalizeEmail($config['recovery_from_email'] ?? 'noreply@suvarnaitenterprises.com');
+                    $headers = "From: Suvarna IT Enterprises <{$fromEmail}>\r\nContent-Type: text/plain; charset=UTF-8";
+                    $sent = mail(
+                        $email,
+                        'Reset your Suvarna IT Enterprises password',
+                        "We received a request to reset your account password. Use this one-time link within 10 minutes:\n\n{$resetUrl}\n\nIf you did not request this, you can ignore this email.",
+                        $headers
+                    );
+                    if (!$sent) error_log('Customer password recovery email could not be sent.');
+                }
+            }
             respond(200, ['ok' => true]);
 
         case 'customer-session':
@@ -1173,6 +1202,7 @@ try {
             if ($serialized === false || strlen($serialized) > MAX_SHARED_STORE_BYTES) {
                 respond(413, ['error' => 'The shared store data is too large to save.']);
             }
+            $previousData = null;
             $pdo->beginTransaction();
             try {
                 $statement = $pdo->prepare('SELECT store_data, revision FROM shared_store WHERE store_key = ? FOR UPDATE');
@@ -1193,6 +1223,7 @@ try {
                     if (!is_array($currentData)) {
                         throw new RuntimeException('Shared store data is not valid JSON.');
                     }
+                    $previousData = $currentData;
                     $profile = currentAdminProfile();
                     foreach (['orders' => 'orders', 'enquiries' => 'enquiries'] as $collection => $permission) {
                         if (!$profile['master'] && !in_array($permission, $profile['permissions'], true)) {
@@ -1236,6 +1267,7 @@ try {
                 }
 
                 $pdo->commit();
+                if (is_array($previousData)) cleanupUnreferencedMedia($previousData, $data);
                 respond(200, ['revision' => $revision]);
             } catch (Throwable $error) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
@@ -1633,8 +1665,12 @@ function rejectProductsWithActiveReservations(array $currentData, array $newData
         if (is_array($product) && isset($product['id'])) $newIds[(string) $product['id']] = true;
     }
     foreach (($currentData['orders'] ?? []) as $order) {
-        if (!is_array($order) || ($order['stockReservationState'] ?? '') !== 'reserved') continue;
-        if (in_array(strtolower(cleanText($order['status'] ?? '', 20)), ['cancelled', 'delivered'], true)) continue;
+        if (!is_array($order)) continue;
+        $status = strtolower(cleanText($order['status'] ?? '', 20));
+        $reservationState = $order['stockReservationState'] ?? '';
+        $stillNeedsProduct = ($reservationState === 'reserved' && !in_array($status, ['cancelled', 'delivered'], true))
+            || ($reservationState === 'released' && $status === 'cancelled');
+        if (!$stillNeedsProduct) continue;
         foreach (($order['stockReservations'] ?? []) as $reservation) {
             if (!is_array($reservation)) continue;
             $productId = (string) ($reservation['productId'] ?? '');
@@ -2005,6 +2041,33 @@ function storeMediaFile(string $mime, string|false $contents): string
         throw new RuntimeException('Could not store the uploaded media file.');
     }
     return '/uploads/media/' . $filename;
+}
+
+function collectReferencedMedia(mixed $value, array &$references): void
+{
+    if (is_array($value)) {
+        foreach ($value as $child) collectReferencedMedia($child, $references);
+        return;
+    }
+    if (!is_string($value)) return;
+    if (preg_match_all('~(?:https?://[^/]+)?(/uploads/media/[a-f0-9]{32}\.(?:jpg|png|webp|gif|avif|mp4|webm))~i', $value, $matches)) {
+        foreach ($matches[1] as $path) $references[$path] = true;
+    }
+}
+
+function cleanupUnreferencedMedia(array $previousData, array $currentData): void
+{
+    $oldReferences = [];
+    $currentReferences = [];
+    collectReferencedMedia($previousData, $oldReferences);
+    collectReferencedMedia($currentData, $currentReferences);
+    $mediaDirectory = dirname(__DIR__) . '/uploads/media';
+    foreach (array_diff_key($oldReferences, $currentReferences) as $path => $_) {
+        $filename = basename($path);
+        if (!preg_match('/^[a-f0-9]{32}\.(?:jpg|png|webp|gif|avif|mp4|webm)$/i', $filename)) continue;
+        $file = $mediaDirectory . DIRECTORY_SEPARATOR . $filename;
+        if (is_file($file) && !@unlink($file)) error_log('An unreferenced uploaded media file could not be removed.');
+    }
 }
 
 function externalizeEmbeddedMedia(array &$data): int

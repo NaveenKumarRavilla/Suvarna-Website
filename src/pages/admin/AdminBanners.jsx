@@ -100,6 +100,7 @@ export default function AdminBanners() {
   const [savingBanner, setSavingBanner] = useState(false);
   const [resetNotice, setResetNotice] = useState('');
   const importInputRef = useRef(null);
+  const addSlideButtonRef = useRef(null);
   const restoredDraftRef = useRef(false);
 
   useEffect(() => () => setAdminFormDirty(false), [setAdminFormDirty]);
@@ -200,6 +201,7 @@ export default function AdminBanners() {
     } catch (error) {
       console.error('Could not clear the banner form draft.', error);
     }
+    window.requestAnimationFrame(() => addSlideButtonRef.current?.focus());
   };
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -350,7 +352,7 @@ export default function AdminBanners() {
               <Upload size={16} />{importing ? 'Importing...' : 'Import CSV'}
             </Button>
             <input ref={importInputRef} type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" onChange={importBanners} className="hidden" aria-label="Import banners from CSV" />
-            <Button variant="secondary" size="md" onClick={openAdd}>
+            <Button ref={addSlideButtonRef} variant="secondary" size="md" onClick={openAdd}>
               <Plus size={16} />
               Add Slide
             </Button>
@@ -412,7 +414,7 @@ export default function AdminBanners() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => banners.length > 1 && deleteBanner(b.id)}
+                      onClick={async () => { if (banners.length <= 1 || !window.confirm(`Delete the "${b.title}" banner?`)) return; const deleted = await deleteBanner(b.id); if (!deleted) setImportError('Banner was not deleted because the database could not confirm the change.'); }}
                       aria-label={`Delete ${b.title}`}
                       className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-30"
                       disabled={banners.length <= 1}

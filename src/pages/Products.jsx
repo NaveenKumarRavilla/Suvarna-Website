@@ -102,8 +102,8 @@ export default function Products() {
         ) return false;
         if (p.price > filters.maxPrice) return false;
         if (search) {
-          const haystack = `${p.name} ${p.brand} ${p.category} ${Object.values(p.specs).join(' ')}`.toLowerCase();
-          if (!haystack.includes(search)) return false;
+          const haystack = `${p.name} ${p.brand} ${p.category} ${Object.values(p.specs || {}).join(' ')}`.toLowerCase();
+          if (!search.trim().split(/\s+/).every((term) => haystack.includes(term))) return false;
         }
         return true;
       }),
@@ -111,6 +111,7 @@ export default function Products() {
   );
 
   const categoryName = managedCategories.find((category) => category.id === filters.category)?.label || categoryLabel(filters.category);
+  const categoryHasProducts = filters.category === 'all' || products.some((product) => normalizeCategoryId(product.category) === normalizeCategoryId(filters.category));
   const title = offersOnly
     ? "Today's Offers"
     : search
@@ -185,6 +186,10 @@ export default function Products() {
             products={filtered}
             colsClass="xl:grid-cols-3 2xl:grid-cols-4"
             onReset={clearCatalogueFilters}
+            emptyMessage={filters.category !== 'all' && !categoryHasProducts
+              ? `We do not have ${categoryName.toLowerCase()} available right now.`
+              : 'Try adjusting your search or filters.'}
+            emptyActionLabel="Browse all products"
           />
         </main>
       </div>

@@ -1,3 +1,4 @@
+import { forwardRef } from 'react';
 import { Link } from 'react-router-dom';
 
 const variants = {
@@ -22,7 +23,7 @@ export function buttonClasses(variant = 'primary', size = 'md', extra = '') {
   return `inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary disabled:cursor-not-allowed disabled:opacity-50 ${variants[variant]} ${sizes[size]} ${extra}`;
 }
 
-export default function Button({
+const Button = forwardRef(function Button({
   variant = 'primary',
   size = 'md',
   to,
@@ -30,25 +31,27 @@ export default function Button({
   className = '',
   children,
   ...props
-}) {
+}, ref) {
   const cls = buttonClasses(variant, size, className);
   if (to) {
     return (
-      <Link to={to} className={cls} {...props}>
+      <Link to={to} className={cls} ref={ref} {...props}>
         {children}
       </Link>
     );
   }
   if (href) {
     return (
-      <a href={href} className={cls} {...props}>
+      <a href={href} className={cls} ref={ref} {...props}>
         {children}
       </a>
     );
   }
   return (
-    <button className={cls} {...props}>
+    <button ref={ref} className={cls} {...props}>
       {children}
     </button>
   );
-}
+});
+
+export default Button;

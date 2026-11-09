@@ -200,6 +200,18 @@ export function AuthProvider({ children }) {
         }
       },
 
+      requestPasswordRecovery: async (email) => {
+        try {
+          await apiRequest('customer-password-recovery-request', {
+            method: 'POST',
+            body: { email: normalizeEmail(email) },
+          });
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: error.message, status: error.status };
+        }
+      },
+
       loginWithGoogle: (options = {}) => new Promise((resolve) => {
         let settled = false;
         const finish = (result) => {

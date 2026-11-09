@@ -375,7 +375,7 @@ export default function ProductDetails({ product, related }) {
                 className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-bold text-navy-900 transition hover:bg-accent-dark hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Zap size={16} />
-                Buy Now
+                Add and go to checkout
               </button>
             </div>
             <div className="mt-3 flex gap-3">

@@ -7,6 +7,8 @@ export default function ProductGrid({
   products,
   colsClass = 'xl:grid-cols-4',
   onReset,
+  emptyMessage = 'Try adjusting your search or filters.',
+  emptyActionLabel = 'Clear Filters',
 }) {
   const scrollRef = useRef(null);
 
@@ -28,13 +30,11 @@ export default function ProductGrid({
         <PackageSearch size={48} className="text-slate-300" />
         <div>
           <h3 className="text-lg font-bold text-primary">No products found</h3>
-          <p className="mt-1 text-sm text-slate-500">
-            Try adjusting your search or filters.
-          </p>
+          <p className="mt-1 text-sm text-slate-500">{emptyMessage}</p>
         </div>
         {onReset && (
           <Button variant="outline" size="sm" onClick={onReset}>
-            Clear Filters
+            {emptyActionLabel}
           </Button>
         )}
       </div>

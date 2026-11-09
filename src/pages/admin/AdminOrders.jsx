@@ -10,23 +10,27 @@ const statuses = ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'];
 export default function AdminOrders() {
   const { orders, updateOrderStatus } = useAdmin();
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
   const [statusError, setStatusError] = useState('');
   const [updatingOrder, setUpdatingOrder] = useState(null);
 
   const filteredOrders = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
-    if (!keyword) return orders;
+    const keyword = search.trim().replace(/^#/, '').toLowerCase();
 
     return orders.filter((o) => {
       const customer = (o.customer || 'Guest').toLowerCase();
       const mobile = (o.phone || '').toLowerCase();
-      const orderId = String(o.id || '').toLowerCase();
+      const orderId = String(o.id || '').replace(/^#/, '').toLowerCase();
+      const status = String(o.status || 'Pending');
+      const matchesStatus = statusFilter === 'All' || status.toLowerCase() === statusFilter.toLowerCase();
 
-      return orderId.includes(keyword)
+      return matchesStatus && (!keyword
+        || orderId.includes(keyword)
         || customer.includes(keyword)
-        || mobile.includes(keyword);
+        || mobile.includes(keyword)
+        || status.toLowerCase().includes(keyword));
     });
-  }, [orders, search]);
+  }, [orders, search, statusFilter]);
 
   const handleStatusChange = async (id, status) => {
     setUpdatingOrder(id);
@@ -42,16 +46,22 @@ export default function AdminOrders() {
       {statusError && <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{statusError}</p>}
 
       <div className="mb-4 rounded-xl bg-white p-3 shadow-card">
-        <div className="relative">
+        <div className="flex flex-col gap-3 sm:flex-row">
+        <div className="relative flex-1">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className={`${inputCls} pl-9`}
-            placeholder="Search by order ID, customer name or mobile number"
+            placeholder="Search by order ID, customer, mobile number or status"
             aria-label="Search orders"
           />
+        </div>
+        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className={`${inputCls} sm:max-w-48`} aria-label="Filter orders by status">
+          <option value="All">All statuses</option>
+          {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
+        </select>
         </div>
       </div>
 

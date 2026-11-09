@@ -116,9 +116,10 @@ export default function AdminPromoCards() {
     setModalOpen(false);
   };
 
-  const handleDelete = (promo) => {
+  const handleDelete = async (promo) => {
     if (window.confirm(`Delete the "${promo.title}" promo card?`)) {
-      deletePromoCard(promo.id);
+      const deleted = await deletePromoCard(promo.id);
+      if (!deleted) setSaveError('Promo card was not deleted because the database could not confirm the change.');
     }
   };
 

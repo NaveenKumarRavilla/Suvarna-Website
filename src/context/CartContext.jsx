@@ -278,7 +278,7 @@ export function CartProvider({ children }) {
   }, []);
 
   const value = useMemo(() => {
-    const commit = (type, details = {}) => {
+    const commit = (type, details = {}, validate = null) => {
       const seed = getCartSeed();
       const savedOperations = readOperations();
       if (seed && savedOperations) {
@@ -290,6 +290,7 @@ export function CartProvider({ children }) {
         itemsRef.current = savedOperations.reduce(applyCartOperation, seed);
         dispatch({ type: 'REPLAY_OPERATIONS', seed, operations: savedOperations });
       }
+      if (validate && !validate(itemsRef.current)) return false;
       const clock = Math.max(Date.now(), logicalClock.current + 1);
       logicalClock.current = clock;
       sequence.current += 1;
@@ -302,6 +303,7 @@ export function CartProvider({ children }) {
         /* storage unavailable */
       }
       dispatch({ type: 'APPLY_OPERATION', operation });
+      return true;
     };
 
     return {
@@ -311,18 +313,24 @@ export function CartProvider({ children }) {
         const currentProduct = productsRef.current.find(
           (candidate) => normalizeProductId(candidate.id) === id
         );
-        const existing = state.items.find((item) => normalizeProductId(item.id) === id);
+        const requestedQty = Math.floor(Number(qty) || 0);
         if (
           !currentProduct ||
           !isAvailableStock(currentProduct) ||
           productIdentity(currentProduct) !== productIdentity(product) ||
-          existing?.removedFromCatalogue
+          requestedQty < 1 ||
+          requestedQty > MAX_CART_ITEM_QUANTITY
         ) return false;
-        commit('ADD_ITEM', {
+        return commit('ADD_ITEM', {
           product: { id, ...productCartData(currentProduct) },
-          qty,
+          qty: requestedQty,
+        }, (latestItems) => {
+          const existing = latestItems.find((item) => normalizeProductId(item.id) === id);
+          if (existing?.removedFromCatalogue) return false;
+          const nextQuantity = (existing?.qty || 0) + requestedQty;
+          return nextQuantity <= MAX_CART_ITEM_QUANTITY
+            && (currentProduct.stockQuantity == null || nextQuantity <= Number(currentProduct.stockQuantity));
         });
-        return true;
       },
       removeItem: (id) => commit('REMOVE_ITEM', { id }),
       updateQty: (id, qty) => {

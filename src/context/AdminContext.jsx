@@ -646,6 +646,24 @@ export function AdminProvider({ children }) {
     }
   };
 
+  const commitSharedMutationConfirmed = async (updateStore) => {
+    if (!currentUserRef.current || !sharedStoreReadyRef.current || savingSharedDataRef.current || sharedStoreConflictRef.current) {
+      setSharedStoreError('Wait for the shared store to finish loading and resolve any save conflict before deleting.');
+      return false;
+    }
+    let nextStore;
+    try {
+      nextStore = updateStore(storeRef.current);
+      await flushSharedStore(getSharedData(nextStore));
+      storeRef.current = nextStore;
+      setStore(nextStore);
+      persistStore(nextStore);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const saveProductBatch = async (operations) => commitSharedMutation((current) => {
     const products = [...current.products];
     for (const operation of operations) {
@@ -1086,26 +1104,34 @@ export function AdminProvider({ children }) {
           ),
         })),
       deleteCategory: (id) => {
-        if (storeRef.current.products.some((product) => normalizeCategoryId(product.category) === id)) return false;
-        setStore((s) => ({
+        if (storeRef.current.products.some((product) => normalizeCategoryId(product.category) === id)) return Promise.resolve(false);
+        return commitSharedMutationConfirmed((s) => ({
           ...s,
           categories: s.categories.filter((category) => category.id !== id),
         }));
-        return true;
       },
       storefrontProducts: getStorefrontProducts(store.products),
       saveProductBatch,
       addProduct: (item) => saveProductBatch([{ product: item }]),
       updateProduct: (id, patch) => saveProductBatch([{ id, product: patch }]),
-      deleteProduct: (id) =>
-        setStore((s) => ({ ...s, products: s.products.filter((p) => p.id !== id) })),
+      deleteProduct: (id) => {
+        const reserved = storeRef.current.orders.some((order) =>
+          ((order.stockReservationState === 'reserved' && !['cancelled', 'delivered'].includes(String(order.status || '').toLowerCase())) ||
+            (order.stockReservationState === 'released' && String(order.status || '').toLowerCase() === 'cancelled')) &&
+          (order.stockReservations || []).some((reservation) => String(reservation.productId) === String(id))
+        );
+        if (reserved) {
+          setSharedStoreError('This product cannot be deleted while an active order reserves its stock.');
+          return Promise.resolve(false);
+        }
+        return commitSharedMutationConfirmed((s) => ({ ...s, products: s.products.filter((product) => String(product.id) !== String(id)) }));
+      },
 
       banners: store.banners,
       saveBannerBatch,
       addBanner: (item) => saveBannerBatch([{ banner: item }]),
       updateBanner: (id, patch) => saveBannerBatch([{ id, banner: patch }]),
-      deleteBanner: (id) =>
-        setStore((s) => ({ ...s, banners: dedupeBanners(s.banners.filter((b) => b.id !== id)) })),
+      deleteBanner: (id) => commitSharedMutationConfirmed((s) => ({ ...s, banners: dedupeBanners(s.banners.filter((banner) => String(banner.id) !== String(id))) })),
 
       promoCards: store.promoCards,
       addPromoCard: (item) => commitSharedMutation((s) => {
@@ -1119,8 +1145,7 @@ export function AdminProvider({ children }) {
       }),
       updatePromoCard: (id, patch) =>
         commitSharedMutation((s) => ({ ...s, promoCards: s.promoCards.map((item) => (item.id === id ? { ...item, ...patch } : item)) })),
-      deletePromoCard: (id) =>
-        setStore((s) => ({ ...s, promoCards: s.promoCards.filter((item) => item.id !== id) })),
+      deletePromoCard: (id) => commitSharedMutationConfirmed((s) => ({ ...s, promoCards: s.promoCards.filter((item) => String(item.id) !== String(id)) })),
 
       offers: store.offers,
       addOffer: (item) => commitSharedMutation((s) => {
@@ -1134,8 +1159,7 @@ export function AdminProvider({ children }) {
       }),
       updateOffer: (id, patch) =>
         commitSharedMutation((s) => ({ ...s, offers: s.offers.map((o) => (o.id === id ? { ...o, ...patch } : o)) })),
-      deleteOffer: (id) =>
-        setStore((s) => ({ ...s, offers: s.offers.filter((o) => o.id !== id) })),
+      deleteOffer: (id) => commitSharedMutationConfirmed((s) => ({ ...s, offers: s.offers.filter((offer) => String(offer.id) !== String(id)) })),
 
       videos: store.videos,
       addVideo: (item) => commitSharedMutation((s) => {
@@ -1149,8 +1173,7 @@ export function AdminProvider({ children }) {
       }),
       updateVideo: (id, patch) =>
         commitSharedMutation((s) => ({ ...s, videos: s.videos.map((v) => (v.id === id ? { ...v, ...patch } : v)) })),
-      deleteVideo: (id) =>
-        setStore((s) => ({ ...s, videos: s.videos.filter((v) => v.id !== id) })),
+      deleteVideo: (id) => commitSharedMutationConfirmed((s) => ({ ...s, videos: s.videos.filter((video) => String(video.id) !== String(id)) })),
 
       orders: store.orders,
       refreshStorefrontData,

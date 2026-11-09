@@ -98,7 +98,7 @@ export default function AdminOffers() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => deleteOffer(o.id)}
+                    onClick={async () => { if (!window.confirm(`Delete the "${o.title}" offer?`)) return; const deleted = await deleteOffer(o.id); if (!deleted) setSaveError('Offer was not deleted because the database could not confirm the change.'); }}
                     aria-label={`Delete offer ${o.title}`}
                     className="rounded-lg p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
                   >
