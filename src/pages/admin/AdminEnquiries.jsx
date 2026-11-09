@@ -1,11 +1,13 @@
-import { Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { Eye, Trash2 } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
-import { PageHeader, StatusBadge, tableWrap, tableCls, thCls, tdCls, inputCls } from '../../components/admin/AdminForm';
+import { Modal, PageHeader, StatusBadge, tableWrap, tableCls, thCls, tdCls, inputCls } from '../../components/admin/AdminForm';
 
 const statuses = ['New', 'Contacted', 'Closed'];
 
 export default function AdminEnquiries() {
   const { enquiries, updateEnquiryStatus, deleteEnquiry } = useAdmin();
+  const [selectedEnquiry, setSelectedEnquiry] = useState(null);
 
   return (
     <div>
@@ -29,7 +31,7 @@ export default function AdminEnquiries() {
                 <th className={thCls}>Subject</th>
                 <th className={thCls}>Message</th>
                 <th className={thCls}>Status</th>
-                <th className={thCls}><span className="sr-only">Actions</span></th>
+                <th className={thCls}>Details</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -42,7 +44,7 @@ export default function AdminEnquiries() {
                   </td>
                   <td className={`${tdCls} font-medium`}>{e.subject}</td>
                   <td className={tdCls}>
-                    <span className="block max-w-[240px] truncate text-xs text-slate-500">{e.message}</span>
+                    <span className="block max-w-[240px] truncate text-xs text-slate-500" title={e.message}>{e.message}</span>
                   </td>
                   <td className={tdCls}>
                     <div className="flex items-center gap-2">
@@ -60,6 +62,15 @@ export default function AdminEnquiries() {
                     </div>
                   </td>
                   <td className={tdCls}>
+                    <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedEnquiry(e)}
+                      aria-label={`View full enquiry from ${e.name}`}
+                      className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary"
+                    >
+                      <Eye size={15} />
+                    </button>
                     <button
                       type="button"
                       onClick={() => deleteEnquiry(e.id)}
@@ -68,12 +79,25 @@ export default function AdminEnquiries() {
                     >
                       <Trash2 size={15} />
                     </button>
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+      {selectedEnquiry && (
+        <Modal title="Enquiry details" onClose={() => setSelectedEnquiry(null)}>
+          <dl className="space-y-4 text-sm">
+            <div><dt className="font-semibold text-slate-500">Date</dt><dd className="mt-1 text-primary">{selectedEnquiry.date}</dd></div>
+            <div><dt className="font-semibold text-slate-500">Name</dt><dd className="mt-1 text-primary">{selectedEnquiry.name}</dd></div>
+            <div><dt className="font-semibold text-slate-500">Email</dt><dd className="mt-1"><a className="text-secondary hover:underline" href={`mailto:${selectedEnquiry.email}`}>{selectedEnquiry.email || 'Not provided'}</a></dd></div>
+            <div><dt className="font-semibold text-slate-500">Phone</dt><dd className="mt-1"><a className="text-secondary hover:underline" href={`tel:${selectedEnquiry.phone || ''}`}>{selectedEnquiry.phone || 'Not provided'}</a></dd></div>
+            <div><dt className="font-semibold text-slate-500">Subject</dt><dd className="mt-1 text-primary">{selectedEnquiry.subject || 'No subject'}</dd></div>
+            <div><dt className="font-semibold text-slate-500">Full message</dt><dd className="mt-1 whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 text-slate-700">{selectedEnquiry.message}</dd></div>
+          </dl>
+        </Modal>
       )}
     </div>
   );

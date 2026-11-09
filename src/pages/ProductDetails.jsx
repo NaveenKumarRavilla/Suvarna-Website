@@ -40,7 +40,7 @@ export default function ProductDetailsPage() {
           <li aria-hidden="true">/</li>
           <li>
             <Link
-              to={`/products?category=${product.category}`}
+              to={`/products?${new URLSearchParams({ category: product.category })}`}
               className="capitalize transition hover:text-secondary"
             >
               {product.category}
@@ -52,7 +52,7 @@ export default function ProductDetailsPage() {
           </li>
         </ol>
       </nav>
-      <ProductDetails product={product} related={related} />
+      <ProductDetails key={String(product.id)} product={product} related={related} />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Phone, Mail, MapPin, Clock, MessageCircle, Send, CheckCircle2 } from 'lucide-react';
 import { useAdmin } from '../context/AdminContext';
@@ -14,6 +14,7 @@ export default function Contact() {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
+  const enquiryRequestRef = useRef({ fingerprint: '', key: '' });
   const { addEnquiry, settings, policies } = useAdmin();
   const policyLinks = [
     ...policyOptions.map(({ id }) => id).filter((id) => policies[id]),
@@ -32,19 +33,32 @@ export default function Contact() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     const form = e.currentTarget;
-    setSending(true);
-    const result = await addEnquiry({
+    const enquiry = {
       name: form.querySelector('#ct-name')?.value || '',
       email: form.querySelector('#ct-email')?.value || '',
       phone: form.querySelector('#ct-phone')?.value || '',
       subject: form.querySelector('#ct-subject')?.value || '',
       message: form.querySelector('#ct-message')?.value || '',
-    });
-    setSending(false);
+    };
+    const fingerprint = JSON.stringify(enquiry);
+    if (enquiryRequestRef.current.fingerprint !== fingerprint) {
+      enquiryRequestRef.current = {
+        fingerprint,
+        key: globalThis.crypto?.randomUUID?.() || `enq-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      };
+    }
+    setSending(true);
+    let result;
+    try {
+      result = await addEnquiry({ ...enquiry, idempotencyKey: enquiryRequestRef.current.key });
+    } finally {
+      setSending(false);
+    }
     if (!result.ok) {
       setError(result.error);
       return;
     }
+    enquiryRequestRef.current = { fingerprint: '', key: '' };
     setError('');
     setSent(true);
   };

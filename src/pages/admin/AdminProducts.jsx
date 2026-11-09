@@ -174,6 +174,7 @@ export default function AdminProducts() {
   const [editBase, setEditBase] = useState(null);
   const [pendingCreateId, setPendingCreateId] = useState(null);
   const [formMode, setFormMode] = useState('add');
+  const [formSession, setFormSession] = useState(0);
   const [form, setForm] = useState(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
   const [formError, setFormError] = useState('');
@@ -187,6 +188,9 @@ export default function AdminProducts() {
   const [uploadingProductImage, setUploadingProductImage] = useState(false);
   const importInputRef = useRef(null);
   const restoredDraftRef = useRef(false);
+  const uploadingProductImageRef = useRef(false);
+  const formSessionRef = useRef(formSession);
+  formSessionRef.current = formSession;
 
   const productCategories = [...new Set(products.map((product) => product.category).filter(Boolean))].sort();
   const categoryOptions = [...new Map([
@@ -211,9 +215,20 @@ export default function AdminProducts() {
     return searchableText.includes(searchTerm);
   });
   const hiddenFromStorefrontCount = products.filter((product) => !isPublishableProduct(product)).length;
+  const handleProductImageUploading = (busy, scope) => {
+    if (scope !== formSessionRef.current) return;
+    uploadingProductImageRef.current = busy;
+    setUploadingProductImage(busy);
+  };
 
-  const openAdd = () => { setEditing(null); setEditBase(null); setPendingCreateId(null); setFormMode('add'); setForm(emptyForm()); setFormError(''); setAdminFormDirty(true); setFormOpen(true); };
+  const openAdd = () => {
+    if (uploadingProductImageRef.current) return;
+    setFormSession((session) => session + 1);
+    setEditing(null); setEditBase(null); setPendingCreateId(null); setFormMode('add'); setForm(emptyForm()); setFormError(''); setAdminFormDirty(true); setFormOpen(true);
+  };
   const openEdit = (product, clone = false) => {
+    if (uploadingProductImageRef.current) return;
+    setFormSession((session) => session + 1);
     const productImages = Array.isArray(product.images) && product.images.length ? product.images : product.image ? [product.image] : [];
     const configuration = Object.entries(product.specs || {}).map(([key, value]) => ({ key, value: String(value || '') }));
     setEditing(clone ? null : product);
@@ -253,6 +268,7 @@ export default function AdminProducts() {
       setEditBase(isEditing ? (draft.baseRecord || JSON.stringify(existing)) : null);
       setPendingCreateId(draft.pendingCreateId || null);
       setFormMode(isEditing ? 'edit' : draft.mode === 'clone' ? 'clone' : 'add');
+      setFormSession((session) => session + 1);
       setForm({ ...emptyForm(), ...draft.form });
       setFormError('Recovered an unsaved product form from this browser.');
       setFormOpen(true);
@@ -280,6 +296,7 @@ export default function AdminProducts() {
   useEffect(() => () => setAdminFormDirty(false), [setAdminFormDirty]);
 
   const closeForm = (saved = false) => {
+    if (uploadingProductImageRef.current) return;
     if (!saved && !window.confirm('Discard this product form?')) return;
     setEditing(null);
     setEditBase(null);
@@ -299,6 +316,7 @@ export default function AdminProducts() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (uploadingProductImageRef.current) return;
     if (uploadingProductImage) {
       setFormError('Wait for the product image upload to finish before saving.');
       return;
@@ -421,7 +439,8 @@ export default function AdminProducts() {
         }
         const newProduct = { ...product };
         delete newProduct.id;
-        const operationId = id || pendingImport?.ids?.[rowIndex] || createPendingProductId();
+        const pendingId = pendingImport?.ids?.[rowIndex];
+        const operationId = pendingId && pendingId !== id ? pendingId : createPendingProductId();
         operationIds.push(operationId);
         return { id: operationId, product: newProduct };
       });
@@ -468,7 +487,7 @@ export default function AdminProducts() {
               <input id="admin-product-search" type="search" value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Search for products, brands and more..." className="min-w-0 flex-1 px-4 py-2.5 text-sm text-slate-700 outline-none" />
               <button type="submit" aria-label="Search" className="flex items-center gap-2 bg-accent px-4 font-semibold text-navy-900 transition hover:bg-accent-dark hover:text-white"><Search size={18} /><span className="hidden xl:inline">Search</span></button>
             </form>
-            <Button variant="secondary" size="md" onClick={openAdd}><Plus size={16} />Add Product</Button>
+            <Button variant="secondary" size="md" onClick={openAdd} disabled={uploadingProductImage}><Plus size={16} />Add Product</Button>
           </>
         }
       />
@@ -487,7 +506,7 @@ export default function AdminProducts() {
         <section className="mb-6 rounded-xl bg-white p-5 shadow-card sm:p-6">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div><h2 className="text-lg font-extrabold text-primary">{editing ? 'Edit Product' : formMode === 'clone' ? 'Clone Product' : 'Add Product Details'}</h2><p className="mt-1 text-xs text-slate-500">Changes are saved only when you click {editing ? 'Save Changes' : 'Add Product'}.</p></div>
-            <button type="button" onClick={() => closeForm()} aria-label="Close product form" className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-primary"><X size={18} /></button>
+            <button type="button" onClick={() => closeForm()} disabled={uploadingProductImage} aria-label="Close product form" className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"><X size={18} /></button>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -546,7 +565,7 @@ export default function AdminProducts() {
 
             <div className="grid gap-4 xl:grid-cols-2">
               <section className="rounded-xl border border-slate-200 p-3"><Field label="Description"><textarea value={form.description} onChange={set('description')} rows="3" className={inputCls} placeholder="Describe the product, its use cases, and key benefits." /></Field></section>
-              <section className="rounded-xl border border-slate-200 p-3"><h3 className="mb-2 text-sm font-bold text-primary">Product Images</h3><ImageUpload label="Add Image" value={form.images} multiple compact recommendedWidth={1200} recommendedHeight={1200} minimumWidth={600} minimumHeight={600} maximumWidth={2000} maximumHeight={2000} onUploadingChange={setUploadingProductImage} onChange={(value) => setForm((current) => ({ ...current, images: value }))} /></section>
+              <section className="rounded-xl border border-slate-200 p-3"><h3 className="mb-2 text-sm font-bold text-primary">Product Images</h3><ImageUpload key={formSession} scopeKey={formSession} label="Add Image" value={form.images} multiple compact recommendedWidth={1200} recommendedHeight={1200} minimumWidth={600} minimumHeight={600} maximumWidth={2000} maximumHeight={2000} onUploadingChange={handleProductImageUploading} onChange={(value) => setForm((current) => ({ ...current, images: value }))} /></section>
             </div>
             <div className="flex flex-wrap gap-3 border-t border-slate-100 pt-5"><Button type="submit" variant="primary" disabled={savingProduct || uploadingProductImage}>{uploadingProductImage ? 'Uploading image…' : savingProduct ? 'Saving…' : editing ? 'Save Changes' : 'Add Product'}</Button><Button type="button" variant="ghost" onClick={() => closeForm()} disabled={savingProduct || uploadingProductImage}>Cancel</Button></div>
           </form>
@@ -615,7 +634,7 @@ export default function AdminProducts() {
                     {stockOptions.map((status) => <option key={status}>{status}</option>)}
                   </select>
                 </td>
-                <td className={tdCls}><span className="flex gap-1"><button type="button" onClick={() => openEdit(product)} aria-label={`Edit ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary"><Pencil size={15} /></button><button type="button" onClick={() => openEdit(product, true)} aria-label={`Clone ${product.name}`} title="Clone product" className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary"><Copy size={15} /></button><button type="button" onClick={() => deleteProduct(product.id)} aria-label={`Delete ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></button></span></td>
+                <td className={tdCls}><span className="flex gap-1"><button type="button" onClick={() => openEdit(product)} disabled={uploadingProductImage} aria-label={`Edit ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary disabled:cursor-not-allowed disabled:opacity-50"><Pencil size={15} /></button><button type="button" onClick={() => openEdit(product, true)} disabled={uploadingProductImage} aria-label={`Clone ${product.name}`} title="Clone product" className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary disabled:cursor-not-allowed disabled:opacity-50"><Copy size={15} /></button><button type="button" onClick={() => deleteProduct(product.id)} aria-label={`Delete ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></button></span></td>
               </tr>
             ))}
           </tbody>

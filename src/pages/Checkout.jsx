@@ -4,6 +4,7 @@ import { ArrowLeft, Banknote, Check, CheckCircle2, ChevronRight, CreditCard, Lan
 import useCart from '../hooks/useCart';
 import { useAdmin } from '../context/AdminContext';
 import { useAuth } from '../context/AuthContext';
+import { apiRequest } from '../utils/api';
 import { FALLBACK_IMAGE, formatPrice, handleImgError } from '../utils/helpers';
 import Button from '../components/common/Button';
 
@@ -73,7 +74,7 @@ export default function Checkout() {
     acknowledgePriceChanges,
   } = useCart();
   const { addOrder, refreshStorefrontData } = useAdmin();
-  const { user, isLoggedIn, updateProfile } = useAuth();
+  const { user, isLoggedIn } = useAuth();
   const initialAddresses = savedFor(user);
   const [page, setPage] = useState('summary');
   const [addressPanel, setAddressPanel] = useState(() => initialAddresses.length === 0);
@@ -100,18 +101,32 @@ export default function Checkout() {
   const saveAddress = async () => {
     const invalid = ['delivery-name', 'delivery-phone', 'delivery-address', 'delivery-city', 'delivery-pin'].find((id) => !document.getElementById(id)?.reportValidity());
     if (invalid) return;
-    const exists = addresses.find((item) => item.address === address.address && item.city === address.city && item.pin === address.pin);
-    const next = exists ? addresses : [...addresses, { id: `address-${Date.now()}`, label: contact.name || `Address ${addresses.length + 1}`, ...address }];
-    if (saveForLater && !exists && isLoggedIn) {
-      const result = await updateProfile({ address: address.address, city: address.city, pin: address.pin, addresses: next });
-      if (!result.ok) {
-        setCustomerError(result.error);
+    const selected = addresses.find((item) => String(item.id) === String(selectedId));
+    const addressId = selected ? selected.id : `address-${globalThis.crypto?.randomUUID?.() || Date.now()}`;
+    const updatedAddress = {
+      id: addressId,
+      label: selected?.label || contact.name || `Address ${addresses.length + 1}`,
+      ...address,
+    };
+    const next = selected
+      ? addresses.map((item) => String(item.id) === String(selected.id) ? updatedAddress : item)
+      : [...addresses, updatedAddress];
+    if (saveForLater && isLoggedIn) {
+      try {
+        const result = await apiRequest('customer-address-upsert', {
+          method: 'POST',
+          body: { address: updatedAddress },
+        });
+        setAddresses(Array.isArray(result.user?.addresses) ? result.user.addresses : next);
+        setCustomerError('');
+      } catch (error) {
+        setCustomerError(error.message);
         return;
       }
+    } else {
       setAddresses(next);
-      setSelectedId(next.at(-1).id);
-      setCustomerError('');
     }
+    setSelectedId(addressId);
     setAddressPanel(false);
   };
   const placeOrder = async () => {
@@ -128,13 +143,6 @@ export default function Checkout() {
     setPlacingOrder(true);
     setCustomerError('');
     try {
-      if (isLoggedIn && saveForLater) {
-        const result = await updateProfile({ address: address.address, city: address.city, pin: address.pin, addresses });
-        if (!result.ok) {
-          setCustomerError(result.error);
-          return;
-        }
-      }
       const order = {
         customer: contact.name || 'Guest',
         phone: contact.phone,

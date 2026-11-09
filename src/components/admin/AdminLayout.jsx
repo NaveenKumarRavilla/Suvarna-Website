@@ -102,7 +102,7 @@ function Sidebar({ onNavigate }) {
 }
 
 export default function AdminLayout() {
-  const { isAdmin, currentUser, sharedStoreReady, sharedStoreSaving, sharedStoreDirty, sharedStoreError, sharedStoreConflict } = useAdmin();
+  const { isAdmin, currentUser, sharedStoreReady, sharedStoreSaving, sharedStoreDirty, sharedStoreError, sharedStoreConflict, adminSessionError } = useAdmin();
   const [mobileOpen, setMobileOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -169,6 +169,11 @@ export default function AdminLayout() {
               {sharedStoreConflict
                 ? `Save conflict: ${sharedStoreError} Your unsaved edits are still in this tab; do not refresh or close it until they are recovered.`
                 : `Shared store sync failed: ${sharedStoreError}`}
+            </p>
+          )}
+          {adminSessionError && (
+            <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+              {adminSessionError}
             </p>
           )}
           {sharedStoreSaving && (

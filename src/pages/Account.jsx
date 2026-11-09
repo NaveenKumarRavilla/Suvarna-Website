@@ -126,6 +126,11 @@ async function downloadInvoice(order, settings) {
     pdf.line(margin, y - 2, right, y - 2);
   }
 
+  const itemSubtotal = (order.items || []).reduce(
+    (sum, item) => sum + (Number(item.price) || 0) * (Number(item.qty) || 1),
+    0
+  );
+  const deliveryFee = Math.max(0, (Number(order.total) || 0) - itemSubtotal);
   if (y + 28 > 275) {
     pdf.addPage();
     y = 24;
@@ -135,10 +140,14 @@ async function downloadInvoice(order, settings) {
   pdf.setFontSize(9);
   pdf.text('Payment method', margin, y);
   pdf.text(order.payment === 'cod' ? 'Cash on Delivery' : order.payment || 'Not recorded', margin + 38, y);
+  pdf.text('Item subtotal', 151, y, { align: 'right' });
+  pdf.text(invoiceAmount(itemSubtotal), right - 2, y, { align: 'right' });
+  pdf.text('Delivery fee', 151, y + 6, { align: 'right' });
+  pdf.text(deliveryFee ? invoiceAmount(deliveryFee) : 'FREE', right - 2, y + 6, { align: 'right' });
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(12);
-  pdf.text('TOTAL', 151, y + 11, { align: 'right' });
-  pdf.text(invoiceAmount(order.total), right - 2, y + 11, { align: 'right' });
+  pdf.text('TOTAL', 151, y + 16, { align: 'right' });
+  pdf.text(invoiceAmount(order.total), right - 2, y + 16, { align: 'right' });
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8);
   pdf.setTextColor(100, 116, 139);

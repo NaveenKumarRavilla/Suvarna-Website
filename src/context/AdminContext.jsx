@@ -165,9 +165,9 @@ const loadStore = () => {
       promoCards: Array.isArray(base.promoCards) ? base.promoCards : seedPromoCards,
       offers: Array.isArray(base.offers) ? base.offers : seedStore().offers,
       videos: Array.isArray(base.videos) ? base.videos : seedStore().videos,
-      orders: Array.isArray(base.orders) ? base.orders : [],
-      customers: Array.isArray(base.customers) ? base.customers : seedCustomers,
-      enquiries: Array.isArray(base.enquiries) ? base.enquiries : [],
+      orders: [],
+      customers: [],
+      enquiries: [],
       settings: { ...seedStore().settings, ...(base.settings || {}) },
       policies: { ...defaultPolicies, ...(base.policies || {}) },
     };
@@ -215,6 +215,34 @@ const getSharedData = (store) =>
 const serializeSharedData = (data) =>
   JSON.stringify(Object.fromEntries(SHARED_DATA_KEYS.map((key) => [key, data[key]])));
 
+const withoutPrivateSharedData = (data) => ({ ...data, orders: [], enquiries: [] });
+const withoutPrivateStoreData = (store) => ({ ...store, orders: [], enquiries: [], customers: [] });
+
+const clearPrivateBrowserCaches = () => {
+  try {
+    const cachedStore = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    if (cachedStore) localStorage.setItem(STORAGE_KEY, JSON.stringify(withoutPrivateStoreData(cachedStore)));
+  } catch (error) {
+    console.error('Could not clear private admin data from the browser cache.', error);
+    try { localStorage.removeItem(STORAGE_KEY); } catch { /* storage unavailable */ }
+  }
+  try {
+    const cachedDraft = JSON.parse(localStorage.getItem(SHARED_DRAFT_STORAGE_KEY) || 'null');
+    if (cachedDraft?.data) {
+      localStorage.setItem(SHARED_DRAFT_STORAGE_KEY, JSON.stringify({
+        ...cachedDraft,
+        data: withoutPrivateSharedData(cachedDraft.data),
+        baseData: cachedDraft.baseData
+          ? serializeSharedData(withoutPrivateSharedData(JSON.parse(cachedDraft.baseData)))
+          : '',
+      }));
+    }
+  } catch (error) {
+    console.error('Could not clear private admin data from the saved admin draft.', error);
+    try { localStorage.removeItem(SHARED_DRAFT_STORAGE_KEY); } catch { /* storage unavailable */ }
+  }
+};
+
 const mergeSharedData = (store, data) => {
   const shared = Object.fromEntries(
     SHARED_DATA_KEYS
@@ -242,7 +270,7 @@ const mergeSharedData = (store, data) => {
 
 const persistStore = (storeSnapshot) => {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(storeSnapshot));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(withoutPrivateStoreData(storeSnapshot)));
   } catch {
     /* storage unavailable */
   }
@@ -260,6 +288,7 @@ export function AdminProvider({ children }) {
   const [sharedStoreError, setSharedStoreError] = useState('');
   const [sharedStoreConflict, setSharedStoreConflict] = useState(false);
   const [adminFormDirty, setAdminFormDirty] = useState(false);
+  const [adminSessionError, setAdminSessionError] = useState('');
   const lastSharedDataRef = useRef('');
   const lastSharedRevisionRef = useRef(0);
   const sharedStoreConflictRef = useRef(false);
@@ -281,6 +310,10 @@ export function AdminProvider({ children }) {
   const authGenerationRef = useRef(0);
   const sharedStoreReadyRef = useRef(sharedStoreReady);
   sharedStoreReadyRef.current = sharedStoreReady;
+
+  useEffect(() => {
+    clearPrivateBrowserCaches();
+  }, []);
   const getPendingImportIds = useCallback((kind, fingerprint) => {
     return pendingImportIdsRef.current.get(kind)?.get(fingerprint) || null;
   }, []);
@@ -300,10 +333,14 @@ export function AdminProvider({ children }) {
   }, []);
   const persistSharedDraft = (data) => {
     try {
+      const safeData = withoutPrivateSharedData(data);
+      const baselineData = lastSharedDataRef.current
+        ? withoutPrivateSharedData(JSON.parse(lastSharedDataRef.current))
+        : null;
       localStorage.setItem(SHARED_DRAFT_STORAGE_KEY, JSON.stringify({
-        data,
+        data: safeData,
         baseRevision: lastSharedRevisionRef.current,
-        baseData: lastSharedDataRef.current,
+        baseData: baselineData ? serializeSharedData(baselineData) : '',
       }));
     } catch (error) {
       console.error('Could not preserve the unsaved admin draft.', error);
@@ -438,6 +475,8 @@ export function AdminProvider({ children }) {
     } catch (error) {
       return { ok: false, error: error.message };
     }
+    clearPrivateBrowserCaches();
+    setAdminSessionError('');
     if (result.admin) {
       setStore((current) => ({
         ...current,
@@ -470,6 +509,8 @@ export function AdminProvider({ children }) {
           admins: [...current.admins.filter((admin) => normalizeEmail(admin.email) !== normalizeEmail(result.email)), result.admin],
         }));
       }
+      clearPrivateBrowserCaches();
+      setAdminSessionError('');
       sharedStoreConflictRef.current = false;
       setSharedStoreConflict(false);
       setSharedStoreReady(false);
@@ -489,16 +530,30 @@ export function AdminProvider({ children }) {
 
   const logout = async () => {
     if (currentUser && !sharedStoreReady) {
-      setSharedStoreError('Wait for the shared store to finish loading before logging out.');
-      return;
+      const error = 'Wait for the shared store to finish loading before logging out.';
+      setAdminSessionError(error);
+      return { ok: false, error };
     }
     if (currentUser && !sharedStoreConflictRef.current) {
       try {
         await flushSharedStore(getSharedData(storeRef.current));
-      } catch {
-        return;
+      } catch (error) {
+        setAdminSessionError(`Could not save pending changes. Sign-out was not completed: ${error.message}`);
+        return { ok: false, error: error.message };
       }
     }
+    try {
+      await apiRequest('admin-logout', { method: 'POST' });
+    } catch (error) {
+      if (error.status !== 401) {
+        const message = `Could not close the server admin session. You are still signed in; retry logout. ${error.message}`;
+        setAdminSessionError(message);
+        console.error('Could not close the admin server session.', error);
+        return { ok: false, error: message };
+      }
+    }
+    setAdminSessionError('');
+    clearPrivateBrowserCaches();
     setSharedStoreReady(false);
     authGenerationRef.current += 1;
     currentUserRef.current = null;
@@ -508,14 +563,11 @@ export function AdminProvider({ children }) {
     } catch {
       /* storage unavailable */
     }
-    try {
-      await apiRequest('admin-logout', { method: 'POST' });
-    } catch (error) {
-      console.error('Could not close the admin server session.', error);
-    }
+    return { ok: true };
   };
 
   const invalidateAdminSession = () => {
+    clearPrivateBrowserCaches();
     authGenerationRef.current += 1;
     currentUserRef.current = null;
     setCurrentUser(null);
@@ -641,14 +693,18 @@ export function AdminProvider({ children }) {
           try {
             const draft = JSON.parse(localStorage.getItem(SHARED_DRAFT_STORAGE_KEY) || 'null');
             if (draft?.data) {
-              const serverBaseline = serializeSharedData(data);
-              if (serializeSharedData(draft.data) === serverBaseline) {
+              const serverBaseline = serializeSharedData(withoutPrivateSharedData(data));
+              const draftData = withoutPrivateSharedData(draft.data);
+              const draftBaseline = draft.baseData
+                ? serializeSharedData(withoutPrivateSharedData(JSON.parse(draft.baseData)))
+                : '';
+              if (serializeSharedData(draftData) === serverBaseline) {
                 localStorage.removeItem(SHARED_DRAFT_STORAGE_KEY);
               } else {
-                recoveredData = { ...data, ...draft.data };
+                recoveredData = { ...data, ...draftData, orders: data.orders, enquiries: data.enquiries };
                 if (
                   Number(draft.baseRevision) !== Number(revision) ||
-                  draft.baseData !== serverBaseline
+                  draftBaseline !== serverBaseline
                 ) {
                   sharedStoreConflictRef.current = true;
                   setSharedStoreConflict(true);
@@ -773,7 +829,7 @@ export function AdminProvider({ children }) {
 
   useEffect(() => {
     try {
-      const serialized = JSON.stringify(store);
+      const serialized = JSON.stringify(withoutPrivateStoreData(store));
       if (serialized.length > 4_800_000) {
         localStorage.removeItem(STORAGE_KEY);
         return;
@@ -838,6 +894,7 @@ export function AdminProvider({ children }) {
       setAdminFormDirty,
       sharedStoreError,
       sharedStoreConflict,
+      adminSessionError,
       isAdmin,
       isMaster,
       currentAdmin,
@@ -1165,13 +1222,15 @@ export function AdminProvider({ children }) {
           return { ok: false, error: error.message };
         }
 
-        addSiteNotification({
-          audience: 'admin',
-          type: 'enquiry',
-          title: 'New enquiry received',
-          summary: `New enquiry from ${savedEnquiry.name || 'a guest'}.`,
-          href: '/admin/enquiries',
-        });
+        if (!result.duplicate) {
+          addSiteNotification({
+            audience: 'admin',
+            type: 'enquiry',
+            title: 'New enquiry received',
+            summary: `New enquiry from ${savedEnquiry.name || 'a guest'}.`,
+            href: '/admin/enquiries',
+          });
+        }
         setStore((s) => {
           return {
             ...s,
@@ -1217,6 +1276,7 @@ export function AdminProvider({ children }) {
     sharedStoreError,
     sharedStoreConflict,
     adminFormDirty,
+    adminSessionError,
     getPendingImportIds,
     rememberPendingImportIds,
     clearPendingImportIds,

@@ -6,11 +6,15 @@ const CartContext = createContext(null);
 const STORAGE_KEY = 'suvarna_cart';
 const MAX_CART_ITEM_QUANTITY = 10;
 
+const normalizeProductId = (id) => String(id ?? '').trim();
 const normalizeQuantity = (quantity) =>
   Math.max(0, Math.min(MAX_CART_ITEM_QUANTITY, Math.floor(Number(quantity) || 0)));
 
 const priceInPaise = (price) => Math.round((Number(price) || 0) * 100);
 const isAvailableStock = (stock) => ['in stock', 'limited stock'].includes(String(stock || '').toLowerCase());
+const productIdentity = (product) => [product.name, product.brand, product.category]
+  .map((value) => String(value || '').trim().toLowerCase())
+  .join('|');
 
 const productCartData = (product) => ({
   name: product.name,
@@ -21,6 +25,7 @@ const productCartData = (product) => ({
   image: product.images?.[0] || product.image || '',
   stock: product.stock || '',
   unavailable: !isAvailableStock(product.stock),
+  productIdentity: productIdentity(product),
 });
 
 const initialState = () => {
@@ -29,11 +34,22 @@ const initialState = () => {
     if (!saved) return { items: [] };
     const parsed = JSON.parse(saved);
     if (!Array.isArray(parsed.items)) return { items: [] };
-    return {
-      items: parsed.items
-        .map((item) => ({ ...item, qty: normalizeQuantity(item.qty) }))
-        .filter((item) => item.qty > 0),
-    };
+    const itemsById = new Map();
+    parsed.items.forEach((item) => {
+      const id = normalizeProductId(item.id);
+      const qty = normalizeQuantity(item.qty);
+      if (!id || !qty) return;
+      const existing = itemsById.get(id);
+      itemsById.set(id, existing
+        ? { ...existing, qty: normalizeQuantity(existing.qty + qty) }
+        : {
+            ...item,
+            id,
+            qty,
+            productIdentity: item.productIdentity || productIdentity(item),
+          });
+    });
+    return { items: [...itemsById.values()] };
   } catch {
     return { items: [] };
   }
@@ -46,15 +62,20 @@ function cartReducer(state, action) {
       const quantity = normalizeQuantity(qty);
       if (!quantity) return state;
       const productData = productCartData(product);
-      const existing = state.items.find((i) => i.id === product.id);
+      const id = normalizeProductId(product.id);
+      if (!id) return state;
+      const existing = state.items.find((item) => normalizeProductId(item.id) === id);
       if (existing) {
         return {
           ...state,
           items: state.items.map((i) =>
-            i.id === product.id
+            normalizeProductId(i.id) === id
               ? {
                   ...i,
+                  id,
                   ...productData,
+                  unavailable: false,
+                  identityChanged: false,
                   qty: normalizeQuantity(i.qty + quantity),
                   priceChanged:
                     Boolean(i.priceChanged) || priceInPaise(i.price) !== priceInPaise(product.price),
@@ -71,7 +92,7 @@ function cartReducer(state, action) {
         items: [
           ...state.items,
           {
-            id: product.id,
+            id,
             ...productData,
             qty: quantity,
             priceChanged: false,
@@ -80,10 +101,10 @@ function cartReducer(state, action) {
       };
     }
     case 'SYNC_PRODUCTS': {
-      const productsById = new Map(action.products.map((product) => [String(product.id), product]));
+      const productsById = new Map(action.products.map((product) => [normalizeProductId(product.id), product]));
       let changed = false;
       const items = state.items.map((item) => {
-        const product = productsById.get(String(item.id));
+        const product = productsById.get(normalizeProductId(item.id));
         if (!product) {
           if (item.unavailable) return item;
           changed = true;
@@ -91,10 +112,17 @@ function cartReducer(state, action) {
         }
 
         const productData = productCartData(product);
+        if (item.productIdentity && item.productIdentity !== productData.productIdentity) {
+          if (item.unavailable && item.identityChanged) return item;
+          changed = true;
+          return { ...item, unavailable: true, identityChanged: true };
+        }
         const priceChanged = priceInPaise(item.price) !== priceInPaise(productData.price);
         const nextItem = {
           ...item,
+          id: normalizeProductId(product.id),
           ...productData,
+          identityChanged: false,
           priceChanged: Boolean(item.priceChanged) || priceChanged,
           previousPrice: item.previousPrice ?? (priceChanged ? item.price : undefined),
           unavailable: productData.unavailable,
@@ -114,14 +142,14 @@ function cartReducer(state, action) {
     case 'REMOVE_ITEM':
       return {
         ...state,
-        items: state.items.filter((i) => i.id !== action.id),
+        items: state.items.filter((i) => normalizeProductId(i.id) !== normalizeProductId(action.id)),
       };
     case 'UPDATE_QTY':
       return {
         ...state,
         items: state.items
           .map((i) =>
-            i.id === action.id ? { ...i, qty: normalizeQuantity(action.qty) } : i
+            normalizeProductId(i.id) === normalizeProductId(action.id) ? { ...i, qty: normalizeQuantity(action.qty) } : i
           )
           .filter((i) => i.qty > 0),
       };

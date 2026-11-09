@@ -1,16 +1,37 @@
+import { useState } from 'react';
 import { Heart, ShoppingCart, Trash2, Plus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import useCart from '../hooks/useCart';
 import { useWishlist } from '../context/WishlistContext';
+import { useAdmin } from '../context/AdminContext';
 import { FALLBACK_IMAGE, formatPrice, handleImgError } from '../utils/helpers';
+
+const normalizeProductId = (id) => String(id ?? '').trim();
+const productIdentity = (product) => [product.name, product.brand, product.category]
+  .map((value) => String(value || '').trim().toLowerCase())
+  .join('|');
+const isAvailable = (product) => ['in stock', 'limited stock'].includes(String(product?.stock || '').toLowerCase());
 
 export default function WishlistPage() {
   const { items, removeItem, clearWishlist } = useWishlist();
   const { addItem } = useCart();
+  const { storefrontProducts } = useAdmin();
+  const [cartNotice, setCartNotice] = useState('');
+  const productsById = new Map(storefrontProducts.map((product) => [normalizeProductId(product.id), product]));
 
   const addAllToCart = () => {
-    items.forEach((product) => addItem(product, 1));
-    clearWishlist();
+    let added = 0;
+    items.forEach((savedProduct) => {
+      const currentProduct = productsById.get(normalizeProductId(savedProduct.id));
+      if (!currentProduct || !isAvailable(currentProduct) || productIdentity(savedProduct) !== productIdentity(currentProduct)) return;
+      addItem(currentProduct, 1);
+      removeItem(savedProduct.id);
+      added += 1;
+    });
+    const remaining = items.length - added;
+    setCartNotice(remaining
+      ? `${added} item(s) added. ${remaining} unavailable or changed item(s) remain in your wishlist.`
+      : 'All available wishlist items were added to your cart.');
   };
 
   return (
@@ -40,6 +61,8 @@ export default function WishlistPage() {
         )}
       </div>
 
+      {cartNotice && <p role="status" className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">{cartNotice}</p>}
+
       {items.length === 0 ? (
         <div className="mt-8 rounded-xl bg-white p-8 text-center shadow-card">
           <Heart size={44} className="mx-auto text-slate-300" />
@@ -54,7 +77,11 @@ export default function WishlistPage() {
         </div>
       ) : (
         <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {items.map((product) => (
+          {items.map((product) => {
+            const currentProduct = productsById.get(normalizeProductId(product.id));
+            const matchesCurrent = currentProduct && productIdentity(product) === productIdentity(currentProduct);
+            const availableProduct = matchesCurrent && isAvailable(currentProduct) ? currentProduct : null;
+            return (
             <article key={product.id} className="overflow-hidden rounded-xl bg-white shadow-card">
               <div className="relative">
                 <Link to={`/product/${product.id}`}> 
@@ -78,14 +105,17 @@ export default function WishlistPage() {
                 <span className="text-[11px] font-bold uppercase tracking-wide text-secondary">{product.brand}</span>
                 <h3 className="mt-1 line-clamp-2 text-sm font-bold text-primary">{product.name}</h3>
                 <p className="mt-1 text-sm font-extrabold text-primary">{formatPrice(product.price)}</p>
+                {!availableProduct && <p className="mt-2 text-xs font-medium text-amber-700">This saved item is unavailable or has changed in the catalogue. Review it before adding.</p>}
                 <div className="mt-4 flex gap-2">
                   <button
                     type="button"
                     onClick={() => {
-                      addItem(product, 1);
+                      if (!availableProduct) return;
+                      addItem(availableProduct, 1);
                       removeItem(product.id);
                     }}
-                    className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-white transition hover:bg-secondary"
+                    disabled={!availableProduct}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-white transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <ShoppingCart size={14} /> Add to Cart
                   </button>
@@ -100,7 +130,8 @@ export default function WishlistPage() {
                 </div>
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

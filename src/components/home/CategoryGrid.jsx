@@ -26,7 +26,7 @@ export default function CategoryGrid() {
           return (
             <Link
               key={cat.id}
-              to={`/products?category=${cat.id}`}
+              to={`/products?${new URLSearchParams({ category: cat.id })}`}
               className="group flex flex-col items-center gap-3 rounded-xl bg-white p-5 text-center shadow-card transition-all duration-300 hover:-translate-y-1 hover:shadow-card-hover"
             >
               <span

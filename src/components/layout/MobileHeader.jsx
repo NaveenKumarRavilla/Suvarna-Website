@@ -11,7 +11,7 @@ import { useAuth } from '../../context/AuthContext';
 export function categoryLink(cat) {
   if (cat.path) return cat.path;
   if (cat.id === 'offers') return '/products?offers=true';
-  return `/products?category=${cat.id}`;
+  return `/products?${new URLSearchParams({ category: cat.id })}`;
 }
 
 export default function MobileHeader() {

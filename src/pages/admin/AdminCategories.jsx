@@ -50,7 +50,7 @@ export default function AdminCategories() {
       setError(`A category with the ID "${id}" already exists.`);
       return;
     }
-    if (!editing && navCategories.some((category) => category.id === id)) {
+    if (!editing && navCategories.some((category) => (category.path || category.special) && category.id === id)) {
       setError(`"${label}" is reserved for a storefront navigation page.`);
       return;
     }

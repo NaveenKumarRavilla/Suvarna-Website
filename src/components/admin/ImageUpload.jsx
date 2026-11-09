@@ -20,6 +20,7 @@ export default function ImageUpload({
   maximumHeight = null,
   compact = false,
   onUploadingChange,
+  scopeKey,
 }) {
   const fileRef = useRef(null);
   const [error, setError] = useState('');
@@ -28,6 +29,19 @@ export default function ImageUpload({
   const [imageMeta, setImageMeta] = useState(null);
   const [uploading, setUploading] = useState(false);
   const uploadingRef = useRef(false);
+  const activeRef = useRef(true);
+  const currentScopeRef = useRef(scopeKey);
+  const uploadingChangeRef = useRef(onUploadingChange);
+  currentScopeRef.current = scopeKey;
+  uploadingChangeRef.current = onUploadingChange;
+
+  useEffect(() => {
+    activeRef.current = true;
+    return () => {
+      activeRef.current = false;
+      if (uploadingRef.current) uploadingChangeRef.current?.(false, scopeKey);
+    };
+  }, [scopeKey]);
 
   const previewImages = Array.isArray(value) ? value : value ? [value] : [];
   const isDataUrl = typeof value === 'string' && value.startsWith('data:');
@@ -51,9 +65,10 @@ export default function ImageUpload({
     if (!files.length) return;
     setError('');
 
+    const uploadScope = scopeKey;
     uploadingRef.current = true;
     setUploading(true);
-    onUploadingChange?.(true);
+    onUploadingChange?.(true, uploadScope);
     try {
       const dimensions = await getImageDimensions(files[0]);
       setImageMeta(dimensions);
@@ -82,16 +97,19 @@ export default function ImageUpload({
           uploaded.push(await uploadMediaFile(file));
         }
         const existing = Array.isArray(value) ? value : value ? [value] : [];
-        onChange([...existing, ...uploaded]);
+        if (activeRef.current && currentScopeRef.current === uploadScope) onChange([...existing, ...uploaded]);
       } else {
-        onChange(await uploadMediaFile(files[0]));
+        const uploaded = await uploadMediaFile(files[0]);
+        if (activeRef.current && currentScopeRef.current === uploadScope) onChange(uploaded);
       }
     } catch (uploadError) {
-      setError(uploadError.message || 'Please choose a valid image file.');
+      if (activeRef.current && currentScopeRef.current === uploadScope) {
+        setError(uploadError.message || 'Please choose a valid image file.');
+      }
     } finally {
       uploadingRef.current = false;
-      setUploading(false);
-      onUploadingChange?.(false);
+      if (activeRef.current) setUploading(false);
+      onUploadingChange?.(false, uploadScope);
     }
 
     e.target.value = '';

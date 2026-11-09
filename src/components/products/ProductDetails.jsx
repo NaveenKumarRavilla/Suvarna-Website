@@ -503,7 +503,7 @@ export default function ProductDetails({ product, related }) {
       {/* Related */}
       {related.length > 0 && (
         <div className="mt-12">
-          <SectionHeader title="Related Products" actionLabel="View All" actionTo={`/products?category=${product.category}`} />
+          <SectionHeader title="Related Products" actionLabel="View All" actionTo={`/products?${new URLSearchParams({ category: product.category })}`} />
           <ProductGrid products={related} />
         </div>
       )}

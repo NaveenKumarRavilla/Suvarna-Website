@@ -46,9 +46,8 @@ export default function AdminDashboard() {
     };
   }, [refreshCustomerCount]);
 
-  const revenue = orders
-    .filter((o) => o.status !== 'Cancelled')
-    .reduce((sum, o) => sum + (o.total || 0), 0);
+  const nonCancelledOrders = orders.filter((order) => String(order.status).toLowerCase() !== 'cancelled');
+  const revenue = nonCancelledOrders.reduce((sum, order) => sum + (Number(order.total) || 0), 0);
 
   const stats = [
     { label: 'Products', value: products.length, icon: Package, to: '/admin/products', color: 'bg-blue-100 text-blue-600' },
@@ -95,11 +94,11 @@ export default function AdminDashboard() {
         <div className="flex items-center gap-2">
           <IndianRupee size={18} className="text-secondary" />
           <h2 className="text-sm font-bold uppercase tracking-wider text-primary">
-            Total Revenue
+            Non-cancelled order value
           </h2>
         </div>
         <p className="mt-2 text-3xl font-black text-primary">{formatPrice(revenue)}</p>
-        <p className="mt-1 text-xs text-slate-500">From {orders.length} order(s)</p>
+        <p className="mt-1 text-xs text-slate-500">From {nonCancelledOrders.length} non-cancelled order(s)</p>
       </div>
 
       <div className="mt-6 rounded-xl bg-white p-5 shadow-card">

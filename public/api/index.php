@@ -418,27 +418,34 @@ try {
             requireMethod('GET');
             $productId = cleanText($_GET['product_id'] ?? '', 80);
             if ($productId === '') respond(422, ['error' => 'Product ID is required.']);
+            $shared = getSharedStore($pdo);
             $statement = $pdo->prepare(
-                'SELECT customer_name AS name, rating, comment, DATE_FORMAT(created_at, \'%Y-%m-%d\') AS date
+                'SELECT customer_email, customer_name AS name, rating, comment, DATE_FORMAT(created_at, \'%Y-%m-%d\') AS date
                  FROM product_reviews WHERE product_id = ? ORDER BY created_at DESC, id DESC'
             );
             $statement->execute([$productId]);
+            $eligibleReviews = array_filter(
+                $statement->fetchAll(),
+                static fn (array $review): bool => hasDeliveredProductOrder($pdo, normalizeEmail($review['customer_email']), $productId, $shared)
+            );
             $reviews = array_map(static function (array $review): array {
+                unset($review['customer_email']);
                 $review['rating'] = (int) $review['rating'];
                 $review['verifiedPurchase'] = true;
                 return $review;
-            }, $statement->fetchAll());
+            }, array_values($eligibleReviews));
             $yourReview = null;
             $canReview = false;
             if (!empty($_SESSION['customer_email'])) {
                 $email = normalizeEmail($_SESSION['customer_email']);
+                $eligiblePurchase = hasDeliveredProductOrder($pdo, $email, $productId, $shared);
                 $statement = $pdo->prepare(
                     'SELECT customer_name AS name, rating, comment, DATE_FORMAT(created_at, \'%Y-%m-%d\') AS date
                      FROM product_reviews WHERE product_id = ? AND customer_email = ?'
                 );
                 $statement->execute([$productId, $email]);
-                $yourReview = $statement->fetch() ?: null;
-                $canReview = $yourReview !== null || hasDeliveredProductOrder($pdo, $email, $productId);
+                $yourReview = $eligiblePurchase ? ($statement->fetch() ?: null) : null;
+                $canReview = $eligiblePurchase;
             }
             respond(200, [
                 'reviews' => $reviews,
@@ -473,11 +480,7 @@ try {
             }
             $email = normalizeEmail($_SESSION['customer_email']);
             if (!hasDeliveredProductOrder($pdo, $email, $productId)) {
-                $statement = $pdo->prepare('SELECT 1 FROM product_reviews WHERE product_id = ? AND customer_email = ?');
-                $statement->execute([$productId, $email]);
-                if (!$statement->fetchColumn()) {
-                    respond(403, ['error' => 'Only customers with a delivered order for this product can leave a review.']);
-                }
+                respond(403, ['error' => 'Only customers with a delivered order for this product can leave a review.']);
             }
             $statement = $pdo->prepare('SELECT name FROM customers WHERE email = ?');
             $statement->execute([$email]);
@@ -522,6 +525,48 @@ try {
                 $_SESSION['customer_email'],
             ]);
             respond(200, ['user' => publicCustomer(getCustomerByEmail($pdo, $_SESSION['customer_email']))]);
+
+        case 'customer-address-upsert':
+            requireMethod('POST');
+            requireCustomer();
+            $input = readJson();
+            $address = $input['address'] ?? null;
+            if (!is_array($address)) respond(422, ['error' => 'A valid address is required.']);
+            $addressId = cleanText($address['id'] ?? '', 80);
+            $label = cleanText($address['label'] ?? 'Saved address', 80);
+            $street = cleanText($address['address'] ?? '', 500);
+            $city = cleanText($address['city'] ?? '', 120);
+            $pin = cleanText($address['pin'] ?? '', 20);
+            if ($addressId === '' || $street === '' || $city === '' || !preg_match('/^\d{6}$/D', $pin)) {
+                respond(422, ['error' => 'Enter an address, city and valid six-digit PIN code.']);
+            }
+            $email = normalizeEmail($_SESSION['customer_email']);
+            $pdo->beginTransaction();
+            try {
+                $statement = $pdo->prepare('SELECT addresses FROM customers WHERE email = ? FOR UPDATE');
+                $statement->execute([$email]);
+                $storedAddresses = $statement->fetchColumn();
+                if ($storedAddresses === false) throw new ApiException(404, 'Customer account was not found.');
+                $addresses = json_decode((string) $storedAddresses, true);
+                if (!is_array($addresses)) $addresses = [];
+                $updatedAddress = ['id' => $addressId, 'label' => $label, 'address' => $street, 'city' => $city, 'pin' => $pin];
+                $found = false;
+                foreach ($addresses as $index => $savedAddress) {
+                    if (is_array($savedAddress) && (string) ($savedAddress['id'] ?? '') === $addressId) {
+                        $addresses[$index] = $updatedAddress;
+                        $found = true;
+                        break;
+                    }
+                }
+                if (!$found) $addresses[] = $updatedAddress;
+                $statement = $pdo->prepare('UPDATE customers SET address = ?, city = ?, pin = ?, addresses = ? WHERE email = ?');
+                $statement->execute([$street, $city, $pin, json_encode(array_values($addresses)), $email]);
+                $pdo->commit();
+            } catch (Throwable $error) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $error;
+            }
+            respond(200, ['user' => publicCustomer(getCustomerByEmail($pdo, $email))]);
 
         case 'customer-logout':
             requireMethod('POST');
@@ -837,6 +882,10 @@ try {
         case 'enquiry-create':
             requireMethod('POST');
             $input = readJson();
+            $idempotencyKey = cleanText($input['idempotencyKey'] ?? '', 100);
+            if (!preg_match('/^[A-Za-z0-9._:-]{16,100}$/D', $idempotencyKey)) {
+                respond(422, ['error' => 'The enquiry submission is missing a valid retry key. Please retry the form.']);
+            }
             $email = normalizeEmail($input['email'] ?? '');
             if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
                 respond(422, ['error' => 'Enter a valid email address.']);
@@ -846,18 +895,29 @@ try {
             if ($name === '' || $message === '') {
                 respond(422, ['error' => 'Name and message are required.']);
             }
+            $phone = cleanText($input['phone'] ?? '', 40);
+            $subject = cleanText($input['subject'] ?? '', 200);
+            $requestHash = hash('sha256', json_encode([
+                'name' => $name,
+                'email' => $email,
+                'phone' => $phone,
+                'subject' => $subject,
+                'message' => $message,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
             $record = [
                 'id' => 'ENQ' . date('ymdHis') . strtoupper(bin2hex(random_bytes(3))),
                 'name' => $name,
                 'email' => $email,
-                'phone' => cleanText($input['phone'] ?? '', 40),
-                'subject' => cleanText($input['subject'] ?? '', 200),
+                'phone' => $phone,
+                'subject' => $subject,
                 'message' => $message,
                 'date' => date('Y-m-d'),
                 'status' => 'New',
+                'idempotencyKey' => $idempotencyKey,
+                'idempotencyHash' => $requestHash,
             ];
-            appendSharedRecord($pdo, 'enquiries', $record);
-            respond(201, ['enquiry' => $record]);
+            $result = appendSharedRecordIdempotently($pdo, 'enquiries', $record);
+            respond($result['duplicate'] ? 200 : 201, $result);
 
         case 'customers-delete':
             requireMethod('POST');
@@ -1112,15 +1172,42 @@ function getSharedStore(PDO $pdo): array|false
     return ['data' => $data, 'revision' => $row['revision']];
 }
 
-function hasDeliveredProductOrder(PDO $pdo, string $email, string $productId): bool
+function productSnapshotMatches(array $snapshot, array $product): bool
 {
-    $shared = getSharedStore($pdo);
+    $savedName = strtolower(trim((string) ($snapshot['name'] ?? '')));
+    $currentName = strtolower(trim((string) ($product['name'] ?? '')));
+    if ($savedName === '' || $currentName === '' || $savedName !== $currentName) return false;
+    foreach (['brand', 'category'] as $field) {
+        $saved = strtolower(trim((string) ($snapshot[$field] ?? '')));
+        if ($saved !== '' && $saved !== strtolower(trim((string) ($product[$field] ?? '')))) return false;
+    }
+    return true;
+}
+
+function hasDeliveredProductOrder(PDO $pdo, string $email, string $productId, array|false|null $shared = null): bool
+{
+    $shared ??= getSharedStore($pdo);
     if (!$shared) return false;
+    $product = null;
+    foreach (($shared['data']['products'] ?? []) as $candidate) {
+        if (is_array($candidate) && (string) ($candidate['id'] ?? '') === $productId) {
+            $product = $candidate;
+            break;
+        }
+    }
+    if (!$product) return false;
+
     foreach (($shared['data']['orders'] ?? []) as $order) {
         if (!is_array($order) || normalizeEmail($order['email'] ?? '') !== $email) continue;
         if (strtolower((string) ($order['status'] ?? '')) !== 'delivered') continue;
         foreach (($order['items'] ?? []) as $item) {
-            if (is_array($item) && (string) ($item['id'] ?? '') === $productId) return true;
+            if (
+                is_array($item) &&
+                (string) ($item['id'] ?? '') === $productId &&
+                productSnapshotMatches($item, $product)
+            ) {
+                return true;
+            }
         }
     }
     return false;
@@ -1404,6 +1491,48 @@ function appendSharedRecord(PDO $pdo, string $collection, array $record): void
         $statement = $pdo->prepare('UPDATE shared_store SET store_data = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE store_key = ?');
         $statement->execute([$updated, 'main']);
         $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $error;
+    }
+}
+
+function appendSharedRecordIdempotently(PDO $pdo, string $collection, array $record): array
+{
+    $pdo->beginTransaction();
+    try {
+        $statement = $pdo->prepare('SELECT store_data FROM shared_store WHERE store_key = ? FOR UPDATE');
+        $statement->execute(['main']);
+        $serialized = $statement->fetchColumn();
+        if ($serialized === false) {
+            throw new ApiException(503, 'Store setup is not complete. Ask the administrator to initialize the shared store.');
+        }
+        $data = json_decode($serialized, true);
+        if (!is_array($data) || !is_array($data[$collection] ?? null)) {
+            throw new RuntimeException('Shared store is missing the ' . $collection . ' collection.');
+        }
+        foreach ($data[$collection] as $existing) {
+            if (
+                is_array($existing) &&
+                hash_equals((string) ($existing['idempotencyKey'] ?? ''), (string) ($record['idempotencyKey'] ?? ''))
+            ) {
+                if (!hash_equals((string) ($existing['idempotencyHash'] ?? ''), (string) ($record['idempotencyHash'] ?? ''))) {
+                    throw new ApiException(409, 'This retry key was already used for different enquiry details. Review the form and submit again.');
+                }
+                $pdo->commit();
+                return ['enquiry' => $existing, 'duplicate' => true];
+            }
+        }
+
+        array_unshift($data[$collection], $record);
+        $updated = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($updated === false || strlen($updated) > MAX_SHARED_STORE_BYTES) {
+            throw new ApiException(413, 'Store data is too large to add this enquiry.');
+        }
+        $statement = $pdo->prepare('UPDATE shared_store SET store_data = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE store_key = ?');
+        $statement->execute([$updated, 'main']);
+        $pdo->commit();
+        return ['enquiry' => $record, 'duplicate' => false];
     } catch (Throwable $error) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         throw $error;

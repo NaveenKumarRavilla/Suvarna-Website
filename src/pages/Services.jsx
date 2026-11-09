@@ -27,7 +27,7 @@ export default function Services() {
               <h2 className="text-base font-bold text-primary">{area.title}</h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">{area.description}</p>
               <Link
-                to={`/products?category=${area.category}`}
+                to={`/products?${new URLSearchParams({ category: area.category })}`}
                 className="mt-4 inline-flex text-sm font-semibold text-secondary hover:underline"
               >
                 Browse products
