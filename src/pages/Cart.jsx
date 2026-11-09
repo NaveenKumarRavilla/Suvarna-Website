@@ -16,7 +16,7 @@ export default function Cart() {
     total,
   } = useCart();
   const hasUnreviewedPriceChanges = items.some((item) => item.priceChanged);
-  const hasUnavailableItems = items.some((item) => item.unavailable);
+  const hasUnavailableItems = items.some((item) => item.unavailable || item.removedFromCatalogue);
 
   if (!items.length) {
     return (
@@ -102,7 +102,9 @@ export default function Cart() {
                     </span>
                   )}
                 </div>
-                {item.unavailable && <p className="mt-2 text-xs font-semibold text-red-600">Currently unavailable</p>}
+                {item.removedFromCatalogue
+                  ? <p className="mt-2 text-xs font-semibold text-red-600">This product was removed from the catalogue</p>
+                  : item.unavailable && <p className="mt-2 text-xs font-semibold text-red-600">Currently unavailable</p>}
               </div>
               <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-end">
                 <div className="flex items-center rounded-lg border border-slate-200">

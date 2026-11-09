@@ -6,6 +6,23 @@ import Button from '../common/Button';
 
 const AUTOPLAY_MS = 10000;
 
+const getSlideText = (slide, field) => {
+  const text = String(slide[field] || '');
+  const category = new URLSearchParams(String(slide.link || '').split('?')[1] || '')
+    .get('category')
+    ?.toLowerCase();
+  const mismatchedTerm = category === 'desktops' ? /laptops?/gi : category === 'laptops' ? /desktops?/gi : null;
+  if (!mismatchedTerm || !mismatchedTerm.test(text)) return text;
+  mismatchedTerm.lastIndex = 0;
+  const replacement = category === 'desktops' ? 'desktop' : 'laptop';
+  return text.replace(mismatchedTerm, (match) => {
+    const word = match.toLowerCase().endsWith('s') ? `${replacement}s` : replacement;
+    return match[0] === match[0].toUpperCase()
+      ? `${word[0].toUpperCase()}${word.slice(1)}`
+      : word;
+  });
+};
+
 export default function HeroSlider() {
   const { banners: heroSlides } = useAdmin();
   const [index, setIndex] = useState(0);
@@ -212,10 +229,10 @@ export default function HeroSlider() {
                 {slide.badge}
               </span>
               <h2 className="max-w-md text-2xl font-black leading-tight text-white sm:text-4xl lg:text-[42px]">
-                {slide.title}
+                {getSlideText(slide, 'title')}
               </h2>
               <p className="mt-3 max-w-sm text-sm text-slate-300 sm:text-base">
-                {slide.subtitle}
+                {getSlideText(slide, 'subtitle')}
               </p>
               <div className="mt-6">
                 <Button to={slide.link} variant="accent" size="lg" tabIndex={i === index ? 0 : -1}>
@@ -310,6 +327,7 @@ export default function HeroSlider() {
               restartAutoplay();
             }}
             aria-label={`Go to slide ${i + 1}`}
+            aria-current={i === index ? 'true' : undefined}
             className={`h-2.5 rounded-full transition-all duration-300 ${
               i === index ? 'w-7 bg-accent' : 'w-2.5 bg-white/40 hover:bg-white/70'
             }`}

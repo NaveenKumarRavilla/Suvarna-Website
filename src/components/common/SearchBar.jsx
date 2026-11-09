@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
@@ -6,6 +6,9 @@ import { useAdmin } from '../../context/AdminContext';
 const HIDDEN_FROM_SEARCH = ['home', 'contact', 'services', 'offers'];
 
 export default function SearchBar() {
+  const searchId = useId();
+  const categoryId = `${searchId}-category`;
+  const inputId = `${searchId}-input`;
   const { categories } = useAdmin();
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
@@ -27,11 +30,11 @@ export default function SearchBar() {
       role="search"
       className="flex w-full items-stretch overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200 transition focus-within:ring-2 focus-within:ring-secondary"
     >
-      <label htmlFor="search-category" className="sr-only">
+      <label htmlFor={categoryId} className="sr-only">
         Category
       </label>
       <select
-        id="search-category"
+        id={categoryId}
         value={category}
         onChange={(e) => setCategory(e.target.value)}
         className="hidden max-w-[150px] border-r border-slate-200 bg-slate-50 px-3 text-sm text-slate-600 outline-none md:block"
@@ -43,11 +46,11 @@ export default function SearchBar() {
           </option>
         ))}
       </select>
-      <label htmlFor="search-input" className="sr-only">
+      <label htmlFor={inputId} className="sr-only">
         Search products
       </label>
       <input
-        id="search-input"
+        id={inputId}
         type="search"
         value={query}
         onChange={(e) => setQuery(e.target.value)}

@@ -10,6 +10,7 @@ import CategoryNav from './components/layout/CategoryNav';
 import Footer from './components/layout/Footer';
 import WhatsAppButton from './components/layout/WhatsAppButton';
 import AdminLayout, { AdminPermission } from './components/admin/AdminLayout';
+import RouteMetadata from './components/common/RouteMetadata';
 const Home = lazy(() => import('./pages/Home'));
 const Products = lazy(() => import('./pages/Products'));
 const ProductDetailsPage = lazy(() => import('./pages/ProductDetails'));
@@ -90,8 +91,15 @@ function ApplicationShell() {
 
   return (
     <>
+      <RouteMetadata />
       <ScrollToTop />
       <div className="flex min-h-screen flex-col">
+        <a
+          href="#main-content"
+          className="sr-only z-[100] rounded bg-white px-4 py-2 font-semibold text-primary focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
+        >
+          Skip to content
+        </a>
         <Header />
         {storefrontDataAvailable && storefrontError && (
           <p role="status" className="mx-auto mt-3 w-[calc(100%-2rem)] max-w-8xl rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-900">
@@ -99,7 +107,7 @@ function ApplicationShell() {
           </p>
         )}
         <CategoryNav />
-        <main className="flex-1">
+        <main id="main-content" className="flex-1">
                   <Suspense fallback={<div role="status" className="flex min-h-64 items-center justify-center text-sm text-slate-600">Loading page…</div>}>
                   <Routes>
                     <Route path="/" element={<Home />} />

@@ -12,9 +12,10 @@ const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 export default function ForgotPassword() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { loginWithGoogle, logout, setPasswordForCurrentUser, googleReady, googleLoadError } = useAuth();
+  const { loginWithGoogle, setPasswordForRecovery, googleReady, googleLoadError } = useAuth();
   const [email, setEmail] = useState(searchParams.get('email') || '');
   const [verifiedEmail, setVerifiedEmail] = useState('');
+  const [recoveryToken, setRecoveryToken] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
@@ -30,19 +31,20 @@ export default function ForgotPassword() {
 
     setError('');
     setGoogleLoading(true);
-    const result = await loginWithGoogle();
+    const result = await loginWithGoogle({ purpose: 'password-recovery' });
     setGoogleLoading(false);
 
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    if (normalizeEmail(result.user.email) !== requestedEmail) {
-      logout();
-      setError(`The Google account ${result.user.email} does not match the email you entered. Sign out and choose the correct Google account.`);
+    if (normalizeEmail(result.email) !== requestedEmail) {
+      setRecoveryToken('');
+      setError(`The Google account ${result.email} does not match the email you entered. Choose the correct Google account.`);
       return;
     }
 
+    setRecoveryToken(result.recoveryToken);
     setVerifiedEmail(requestedEmail);
     setError('');
   };
@@ -55,13 +57,13 @@ export default function ForgotPassword() {
     }
 
     setSaving(true);
-    const result = await setPasswordForCurrentUser(password);
+    const result = await setPasswordForRecovery(recoveryToken, password);
     setSaving(false);
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    navigate('/account', { replace: true });
+    navigate('/login', { replace: true });
   };
 
   return (

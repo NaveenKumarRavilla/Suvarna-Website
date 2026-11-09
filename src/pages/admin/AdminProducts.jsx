@@ -4,7 +4,7 @@ import { Copy, Download, Minus, Pencil, Plus, Search, Trash2, Upload, X } from '
 import { useAdmin } from '../../context/AdminContext';
 import { normalizeCategoryId } from '../../data/categories';
 import { formatPrice } from '../../utils/helpers';
-import { getProductPublishabilityIssue, isPublishableProduct } from '../../utils/productQuality';
+import { getProductPublishabilityIssue } from '../../utils/productQuality';
 import { downloadCsv, parseCsv } from '../../utils/csv';
 import { apiRequest } from '../../utils/api';
 import { fingerprintText } from '../../utils/textFingerprint';
@@ -19,7 +19,7 @@ const blankConfiguration = () => ([
 ]);
 
 const emptyForm = () => ({
-  name: '', brand: '', category: 'laptops', price: '', oldPrice: '', stock: 'In Stock', stockQuantity: '', images: [],
+  name: '', sku: '', brand: '', category: 'laptops', price: '', oldPrice: '', stock: 'In Stock', stockQuantity: '', images: [],
   configuration: blankConfiguration(), featured: false, description: '',
   warrantyKind: 'Standard Warranty', warrantyDuration: '1', warrantyUnit: 'Year',
 });
@@ -27,8 +27,12 @@ const emptyForm = () => ({
 const stockOptions = ['In Stock', 'Limited Stock', 'Out of Stock'];
 const inlineInputCls = 'w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 outline-none transition focus:border-secondary focus:ring-2 focus:ring-secondary/20';
 const toSpecKey = (key) => key.trim().toLowerCase().replace(/[^a-z0-9]+(.)?/g, (_, char) => char ? char.toUpperCase() : '');
+const normalizeStockStatus = (value) => stockOptions.find(
+  (status) => status.toLowerCase() === String(value || '').trim().toLowerCase()
+) || '';
 const productCsvHeaders = [
-  'id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'stockQuantity', 'featured',
+  'id', 'name', 'sku', 'brand', 'category', 'price', 'oldPrice', 'stock', 'stockQuantity',
+  'adjustStock', 'expectedStockQuantity', 'featured',
   'description', 'warranty', 'clearImages', 'specs',
   'calculatedRating', 'calculatedReviewCount', 'customerReviewsExportOnly',
 ];
@@ -55,8 +59,9 @@ const parseProductCsv = (text) => {
   const aliases = {
     id: 'id', productid: 'id', name: 'name', productname: 'name', brand: 'brand', productbrand: 'brand',
     category: 'category', productcategory: 'category', price: 'price', productprice: 'price',
-    oldprice: 'oldPrice', stock: 'stock', stockquantity: 'stockQuantity', availableunits: 'stockQuantity', featured: 'featured', description: 'description',
-    warranty: 'warranty', image: 'image', images: 'images', clearimages: 'clearImages', specs: 'specs',
+    oldprice: 'oldPrice', stock: 'stock', stockquantity: 'stockQuantity', availableunits: 'stockQuantity',
+    adjuststock: 'adjustStock', expectedstockquantity: 'expectedStockQuantity', featured: 'featured', description: 'description',
+    warranty: 'warranty', image: 'image', images: 'images', clearimages: 'clearImages', clearspecs: 'clearSpecs', specs: 'specs',
     rating: 'rating', reviews: 'reviews',
     calculatedrating: 'calculatedRating', averagerating: 'calculatedRating',
     calculatedreviewcount: 'calculatedReviewCount', reviewcount: 'calculatedReviewCount',
@@ -89,16 +94,54 @@ const parseProductCsv = (text) => {
     if (!name || !brand || !category) throw new Error(`Row ${rowNumber}: name, brand, and category are required.`);
     if (!Number.isFinite(price) || price <= 0) throw new Error(`Row ${rowNumber}: price must be a positive number.`);
     if (!Number.isFinite(oldPrice) || oldPrice <= 0) throw new Error(`Row ${rowNumber}: oldPrice must be a positive number.`);
-    const stock = Object.hasOwn(record, 'stock') ? record.stock.trim() : 'In Stock';
+    const adjustStockValue = (record.adjustStock || '').trim().toLowerCase();
+    if (adjustStockValue && !['true', 'false', '1', '0', 'yes', 'no'].includes(adjustStockValue)) {
+      throw new Error(`Row ${rowNumber}: adjustStock must be TRUE or FALSE.`);
+    }
+    const adjustStock = ['true', '1', 'yes'].includes(adjustStockValue);
+    const stockValue = (record.stock || '').trim();
     const stockQuantityValue = (record.stockQuantity || '').trim();
-    const stockQuantity = stockQuantityValue ? Number(stockQuantityValue) : undefined;
-    if (stockQuantityValue && (!Number.isInteger(stockQuantity) || stockQuantity < 0)) {
-      throw new Error(`Row ${rowNumber}: stockQuantity must be a non-negative whole number.`);
+    const expectedStockQuantityValue = (record.expectedStockQuantity || '').trim();
+    let initialStockQuantity;
+    if (stockQuantityValue) {
+      initialStockQuantity = Number(stockQuantityValue);
+      if (!Number.isInteger(initialStockQuantity) || initialStockQuantity < 0) {
+        throw new Error(`Row ${rowNumber}: stockQuantity must be a non-negative whole number.`);
+      }
     }
-    if (stock === 'Limited Stock' && (stockQuantity === undefined || stockQuantity < 1)) {
-      throw new Error(`Row ${rowNumber}: stockQuantity must be at least 1 for products marked Limited Stock.`);
+    const initialStockStatus = stockValue
+      ? normalizeStockStatus(stockValue)
+      : initialStockQuantity === 0 ? 'Out of Stock' : 'In Stock';
+    if (stockValue && !initialStockStatus) {
+      throw new Error(`Row ${rowNumber}: stock must be In Stock, Limited Stock, or Out of Stock.`);
     }
-
+    if (stockValue && initialStockStatus === 'Limited Stock' && (!Number.isInteger(initialStockQuantity) || initialStockQuantity < 1)) {
+      throw new Error(`Row ${rowNumber}: Limited Stock requires stockQuantity of at least 1.`);
+    }
+    if (stockValue && initialStockStatus === 'In Stock' && initialStockQuantity === 0) {
+      throw new Error(`Row ${rowNumber}: a stockQuantity of 0 cannot use In Stock. Set Out of Stock or enter a positive quantity.`);
+    }
+    if (stockValue && initialStockStatus === 'Out of Stock' && initialStockQuantity == null) {
+      initialStockQuantity = 0;
+    }
+    let stockQuantity;
+    let expectedStockQuantity;
+    if (adjustStock) {
+      if (!expectedStockQuantityValue) {
+        throw new Error(`Row ${rowNumber}: set expectedStockQuantity to the current server quantity before setting adjustStock=TRUE.`);
+      }
+      if (!stockQuantityValue) {
+        throw new Error(`Row ${rowNumber}: enter the new stockQuantity when setting adjustStock=TRUE.`);
+      }
+      stockQuantity = Number(stockQuantityValue);
+      expectedStockQuantity = Number(expectedStockQuantityValue);
+      if (!Number.isInteger(stockQuantity) || stockQuantity < 0) {
+        throw new Error(`Row ${rowNumber}: stockQuantity must be a non-negative whole number for an adjustment.`);
+      }
+      if (!Number.isInteger(expectedStockQuantity) || expectedStockQuantity < 0) {
+        throw new Error(`Row ${rowNumber}: expectedStockQuantity must be a non-negative whole number.`);
+      }
+    }
     const hasImage = Object.hasOwn(record, 'image') && record.image.trim() !== '';
     const images = Object.hasOwn(record, 'images') && record.images.trim() !== ''
       ? parseJsonCell(record.images, 'images', rowNumber, [])
@@ -108,12 +151,21 @@ const parseProductCsv = (text) => {
       throw new Error(`Row ${rowNumber}: clearImages must be true or false.`);
     }
     const clearImages = ['true', '1', 'yes'].includes(clearImagesValue);
-    const specs = Object.hasOwn(record, 'specs') ? parseJsonCell(record.specs, 'specs', rowNumber, {}) : undefined;
+    const specsValue = (record.specs || '').trim();
+    const specs = specsValue ? parseJsonCell(specsValue, 'specs', rowNumber, {}) : undefined;
+    const clearSpecsValue = (record.clearSpecs || '').trim().toLowerCase();
+    if (clearSpecsValue && !['true', 'false', '1', '0', 'yes', 'no'].includes(clearSpecsValue)) {
+      throw new Error(`Row ${rowNumber}: clearSpecs must be true or false.`);
+    }
+    const clearSpecs = ['true', '1', 'yes'].includes(clearSpecsValue);
     if (!Array.isArray(images) || images.some((image) => typeof image !== 'string')) {
       if (images !== undefined) throw new Error(`Row ${rowNumber}: images must be a JSON array of strings.`);
     }
     if (specs !== undefined && (!specs || typeof specs !== 'object' || Array.isArray(specs))) {
       throw new Error(`Row ${rowNumber}: specs must be a JSON object.`);
+    }
+    if (clearSpecs && Object.keys(specs || {}).length) {
+      throw new Error(`Row ${rowNumber}: provide either non-empty specs or clearSpecs=true, not both.`);
     }
 
     const featuredValue = (record.featured || '').trim().toLowerCase();
@@ -122,8 +174,6 @@ const parseProductCsv = (text) => {
     }
     const product = { name, brand, category, price };
     if (Object.hasOwn(record, 'oldPrice')) product.oldPrice = oldPrice;
-    if (Object.hasOwn(record, 'stock')) product.stock = stock;
-    if (stockQuantity !== undefined) product.stockQuantity = stockQuantity;
     if (Object.hasOwn(record, 'featured')) product.featured = ['true', '1', 'yes'].includes(featuredValue);
     if (Object.hasOwn(record, 'description')) product.description = record.description;
     if (Object.hasOwn(record, 'warranty')) product.warranty = record.warranty;
@@ -137,10 +187,11 @@ const parseProductCsv = (text) => {
       product.image = record.image.trim();
       product.images = [product.image];
     }
-    if (specs !== undefined) product.specs = specs;
+    const hasSpecs = specs && Object.keys(specs).length > 0;
+    if (clearSpecs || hasSpecs) product.specs = clearSpecs ? {} : specs;
     for (const [field, value] of Object.entries(record)) {
       if (
-        ['id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'stockQuantity', 'featured', 'description', 'warranty', 'image', 'images', 'clearImages', 'specs']
+        ['id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'stockQuantity', 'adjustStock', 'expectedStockQuantity', 'featured', 'description', 'warranty', 'image', 'images', 'clearImages', 'specs', 'clearSpecs']
           .includes(field) ||
         calculatedProductFields.has(field)
       ) continue;
@@ -151,13 +202,30 @@ const parseProductCsv = (text) => {
         product[field] = value;
       }
     }
-    const fields = new Set(Object.keys(record).filter((field) => !calculatedProductFields.has(field)));
+    const fields = new Set(Object.keys(record).filter((field) =>
+      !calculatedProductFields.has(field) &&
+      !['stock', 'stockQuantity', 'adjustStock', 'expectedStockQuantity'].includes(field) &&
+      field !== 'clearSpecs' &&
+      (field !== 'specs' || clearSpecs || hasSpecs)
+    ));
+    if (clearSpecs || hasSpecs) fields.add('specs');
     if (Object.hasOwn(product, 'image')) fields.add('image');
     if (Object.hasOwn(product, 'images')) fields.add('images');
     return {
       id,
       product,
       fields,
+      rowNumber,
+      initialStock: {
+        status: initialStockStatus,
+        quantity: initialStockQuantity,
+      },
+      stockAdjustment: {
+        enabled: adjustStock,
+        status: stockValue,
+        quantity: stockQuantity,
+        expectedQuantity: expectedStockQuantity,
+      },
     };
   });
 };
@@ -224,7 +292,9 @@ export default function AdminProducts() {
     ].join(' ').toLowerCase();
     return searchableText.includes(searchTerm);
   });
-  const hiddenFromStorefrontCount = products.filter((product) => !isPublishableProduct(product)).length;
+  const hiddenFromStorefrontCount = products.filter((product) =>
+    Boolean(getProductPublishabilityIssue(product, products))
+  ).length;
   const handleProductImageUploading = (busy, scope) => {
     if (scope !== formSessionRef.current) return;
     uploadingProductImageRef.current = busy;
@@ -249,6 +319,7 @@ export default function AdminProducts() {
     setAdminFormDirty(true);
     setForm({
       name: clone ? `Copy of ${product.name || ''}` : product.name || '',
+      sku: clone ? '' : product.sku || product.productCode || '',
       brand: product.brand || '', category: product.category || 'laptops', price: product.price || '', oldPrice: product.oldPrice || '', stock: product.stock || 'In Stock', stockQuantity: product.stockQuantity == null ? '' : String(product.stockQuantity), images: productImages,
       configuration: configuration.length ? configuration : blankConfiguration(), featured: clone ? false : !!product.featured, description: product.description || '', ...warrantyFormValues(product.warranty),
     });
@@ -338,6 +409,17 @@ export default function AdminProducts() {
         return;
       }
     }
+    const currentProduct = editing
+      ? products.find((product) => String(product.id) === String(editing.id))
+      : null;
+    const normalizedSku = form.sku.trim().toLowerCase();
+    if (normalizedSku && products.some((product) =>
+      String(product.id) !== String(currentProduct?.id) &&
+      String(product.sku || product.productCode || '').trim().toLowerCase() === normalizedSku
+    )) {
+      setFormError('This SKU is already assigned to another product. Use a unique SKU for each variant.');
+      return;
+    }
     const cleanedImages = (form.images || []).filter(Boolean);
     const specs = form.configuration.reduce((result, item) => {
       const key = toSpecKey(item.key || '');
@@ -360,6 +442,10 @@ export default function AdminProducts() {
       setFormError('Enter the available whole-unit quantity before marking this product Limited Stock.');
       return;
     }
+    if (form.stock === 'In Stock' && stockQuantity === 0) {
+      setFormError('A tracked quantity of 0 cannot be marked In Stock. Enter a positive quantity or clear stock tracking.');
+      return;
+    }
     if (form.stockQuantity !== '' && (!Number.isInteger(stockQuantity) || stockQuantity < 0)) {
       setFormError('Available units must be a non-negative whole number.');
       return;
@@ -367,13 +453,17 @@ export default function AdminProducts() {
     setFormError('');
     const warrantyUnit = Number(form.warrantyDuration) === 1 ? form.warrantyUnit : `${form.warrantyUnit}s`;
     const payload = {
-      name: form.name.trim(), brand: form.brand.trim(), category: form.category, price: Number(form.price), oldPrice: form.oldPrice ? Number(form.oldPrice) : Number(form.price), stock: form.stock,
+      name: form.name.trim(), sku: form.sku.trim(), brand: form.brand.trim(), category: form.category, price: Number(form.price), oldPrice: form.oldPrice ? Number(form.oldPrice) : Number(form.price), stock: form.stock,
       image: cleanedImages[0] || '', images: cleanedImages, featured: form.featured,
       specs: { ...specs },
       description: form.description.trim(), warranty: `${form.warrantyDuration} ${warrantyUnit} ${form.warrantyKind}`,
     };
     if (stockQuantity !== undefined) payload.stockQuantity = stockQuantity;
     else if (form.stock === 'Out of Stock') payload.stockQuantity = 0;
+    else if (currentProduct?.stockQuantity != null) {
+      if (!window.confirm('Clear this product’s tracked stock quantity? This removes inventory tracking and may be rejected while active reservations exist.')) return;
+      payload.stockQuantity = null;
+    }
     setSavingProduct(true);
     try {
       const operationId = editing?.id || pendingCreateId || createPendingProductId();
@@ -408,7 +498,8 @@ export default function AdminProducts() {
         reviewsByProduct.set(key, productReviews);
       });
       const dynamicHeaders = products.flatMap((product) => Object.keys(product))
-        .filter((header) => !calculatedProductFields.has(header) && !['image', 'images'].includes(header));
+        .filter((header) => !calculatedProductFields.has(header) &&
+          !['image', 'images', 'stock', 'stockQuantity'].includes(header));
       const headers = [...new Set([...productCsvHeaders, ...dynamicHeaders])];
       downloadCsv('suvarna-products.csv', headers, products.map((product) => {
         const productReviews = reviewsByProduct.get(String(product.id)) || [];
@@ -419,11 +510,13 @@ export default function AdminProducts() {
           if (header === 'calculatedRating') return productReviews.length ? rating.toFixed(2) : '';
           if (header === 'calculatedReviewCount') return productReviews.length;
           if (header === 'customerReviewsExportOnly') return JSON.stringify(productReviews);
+          if (header === 'adjustStock') return 'FALSE';
+          if (header === 'expectedStockQuantity') return product.stockQuantity ?? '';
           const value = product[header];
           return value && typeof value === 'object' ? JSON.stringify(value) : value ?? '';
         });
       }));
-      setImportStatus('Product CSV exported. Rating, review count, and customer reviews are export-only data and are ignored during import.');
+      setImportStatus('Routine imports ignore stock values. For a deliberate adjustment, set adjustStock=TRUE and confirm the exported expectedStockQuantity still matches the current product quantity.');
     } catch (error) {
       setImportError(error.message || 'Products and customer reviews could not be exported.');
     } finally {
@@ -453,14 +546,36 @@ export default function AdminProducts() {
       let updated = 0;
       let added = 0;
       const operationIds = [];
-      const operations = imported.map(({ id, product, fields }, rowIndex) => {
+      const operations = imported.map(({ id, product, fields, rowNumber, initialStock, stockAdjustment }, rowIndex) => {
         const existing = id ? currentProducts.get(id) : null;
         if (existing) {
           const patch = Object.fromEntries(Object.entries(product).filter(([field]) => fields.has(field)));
+          if (stockAdjustment.enabled) {
+            if (existing.stockQuantity == null || !Number.isInteger(Number(existing.stockQuantity))) {
+              throw new Error(`Row ${rowNumber}: this product has no tracked current quantity. Set its quantity in the product editor before importing an adjustment.`);
+            }
+            if (Number(existing.stockQuantity) !== stockAdjustment.expectedQuantity) {
+              throw new Error(`Row ${rowNumber}: expectedStockQuantity is stale (current quantity is ${existing.stockQuantity}). Export the latest products and reapply the adjustment.`);
+            }
+            const status = normalizeStockStatus(stockAdjustment.status || existing.stock || 'In Stock');
+            if (!status) {
+              throw new Error(`Row ${rowNumber}: stock must be In Stock, Limited Stock, or Out of Stock for an adjustment.`);
+            }
+            if (status === 'Limited Stock' && stockAdjustment.quantity < 1) {
+              throw new Error(`Row ${rowNumber}: Limited Stock requires at least one available unit.`);
+            }
+            if (status === 'In Stock' && stockAdjustment.quantity === 0) {
+              throw new Error(`Row ${rowNumber}: a tracked quantity of 0 cannot use In Stock. Set Out of Stock or enter a positive quantity.`);
+            }
+            patch.stock = status;
+            patch.stockQuantity = stockAdjustment.quantity;
+          }
           operationIds.push(existing.id);
           return { id: existing.id, product: patch };
         }
         const newProduct = { ...product };
+        newProduct.stock = initialStock.status;
+        if (initialStock.quantity != null) newProduct.stockQuantity = initialStock.quantity;
         delete newProduct.id;
         const pendingId = pendingImport?.ids?.[rowIndex];
         const operationId = pendingId && pendingId !== id ? pendingId : createPendingProductId();
@@ -480,11 +595,37 @@ export default function AdminProducts() {
         if (id && currentProducts.has(id)) updated += 1;
         else added += 1;
       });
-      setImportStatus(`Imported ${imported.length} product${imported.length === 1 ? '' : 's'}: ${added} added, ${updated} updated.`);
+      const adjustedCount = imported.filter((item) => item.stockAdjustment.enabled).length;
+      setImportStatus(`Imported ${imported.length} product${imported.length === 1 ? '' : 's'}: ${added} added, ${updated} updated${adjustedCount ? `, ${adjustedCount} stock adjustment${adjustedCount === 1 ? '' : 's'} applied` : ''}. Rows without adjustStock=TRUE never update inventory.`);
     } catch (error) {
       setImportError(error.message || `The selected CSV file could not be imported.${retryStorageAvailable ? '' : ' Browser storage is unavailable; retry this same file in this tab before reloading.'}`);
     } finally {
       setImporting(false);
+    }
+  };
+
+  const handleQuickStockChange = async (product, value) => {
+    const status = normalizeStockStatus(value);
+    const quantity = product.stockQuantity == null ? null : Number(product.stockQuantity);
+    if (status === 'In Stock' && quantity === 0) {
+      window.alert('This product has 0 tracked units. Enter a positive quantity in the product editor before marking it In Stock.');
+      return;
+    }
+    if (status === 'Limited Stock' && (!Number.isInteger(quantity) || quantity < 1)) {
+      window.alert('Enter at least one tracked unit in the product editor before marking it Limited Stock.');
+      return;
+    }
+    const patch = { stock: status };
+    if (status === 'Out of Stock' && quantity !== 0) {
+      if (!window.confirm('Mark this product Out of Stock and set its tracked quantity to 0? Active reservations may prevent this change.')) return;
+      patch.stockQuantity = 0;
+    }
+    try {
+      if (!await updateProduct(product.id, patch)) {
+        window.alert('The stock change was not saved. It may be blocked by an active reservation; refresh the product list and try again.');
+      }
+    } catch (error) {
+      window.alert(error.message || 'The stock change could not be saved.');
     }
   };
 
@@ -541,6 +682,7 @@ export default function AdminProducts() {
                 <div className="mt-3 space-y-3">
                   <Field label="Category *"><select value={normalizeCategoryId(form.category)} onChange={set('category')} className={inputCls}>{categoryOptions.map((category) => <option key={category.id} value={category.id}>{category.label}</option>)}</select></Field>
                   <Field label="Product Name *"><input required value={form.name} onChange={set('name')} className={inputCls} placeholder="Dell Latitude 5440 Laptop" /></Field>
+                  <Field label="SKU / Model number"><input value={form.sku} onChange={set('sku')} className={inputCls} placeholder="Optional unique variant identifier" /></Field>
                   <Field label="Brand *"><input required value={form.brand} onChange={set('brand')} className={inputCls} placeholder="Dell" /></Field>
                 </div>
               </section>
@@ -635,9 +777,9 @@ export default function AdminProducts() {
                     aria-label={`Product name for ${product.name}`}
                     className={`${inlineInputCls} min-w-[180px] font-semibold text-primary`}
                   />
-                  {getProductPublishabilityIssue(product) && (
+                  {getProductPublishabilityIssue(product, products) && (
                     <p className="mt-1 max-w-xs text-xs font-medium text-amber-700">
-                      Not visible: {getProductPublishabilityIssue(product)}
+                      Not visible: {getProductPublishabilityIssue(product, products)}
                     </p>
                   )}
                 </td>
@@ -670,7 +812,7 @@ export default function AdminProducts() {
                   />
                 </td>
                 <td className={tdCls}>
-                  <select value={product.stock} onChange={(event) => updateProduct(product.id, { stock: event.target.value })} aria-label={`Stock status for ${product.name}`} className={`${inlineInputCls} min-w-[140px] text-xs`}>
+                  <select value={normalizeStockStatus(product.stock) || 'In Stock'} onChange={(event) => handleQuickStockChange(product, event.target.value)} aria-label={`Stock status for ${product.name}`} className={`${inlineInputCls} min-w-[140px] text-xs`}>
                     {stockOptions.map((status) => <option key={status}>{status}</option>)}
                   </select>
                 </td>

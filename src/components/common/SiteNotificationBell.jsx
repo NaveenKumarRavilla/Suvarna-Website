@@ -14,39 +14,61 @@ const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 
 export default function SiteNotificationBell({ className = '' }) {
   const navigate = useNavigate();
-  const { isAdmin, currentUser } = useAdmin();
-  const { user, isLoggedIn } = useAuth();
+  const { isAdmin, currentUser, refreshAdminProfile } = useAdmin();
+  const { user, isLoggedIn, refreshSession } = useAuth();
   const [notifications, setNotifications] = useState([]);
   const [notificationsOwner, setNotificationsOwner] = useState('');
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [hasOlderNotifications, setHasOlderNotifications] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [open, setOpen] = useState(false);
   const [toast, setToast] = useState(null);
   const [notificationError, setNotificationError] = useState('');
   const rootRef = useRef(null);
+  const refreshVersionRef = useRef(0);
+  const refreshNotificationsRef = useRef(null);
   const owner = isAdmin
     ? `admin:${normalizeEmail(currentUser)}`
     : isLoggedIn ? `customer:${normalizeEmail(user?.email)}` : '';
   const visibleNotifications = notificationsOwner === owner && owner ? notifications : [];
-  const unreadCount = visibleNotifications.filter((notification) => !notification.read).length;
 
   useEffect(() => {
     if (isAdmin || isLoggedIn) {
       setNotifications([]);
       setNotificationsOwner('');
+      setUnreadCount(0);
+      setHasOlderNotifications(false);
       setNotificationError('');
       let active = true;
       let knownIds = null;
       let toastTimer;
       const listAction = isAdmin ? 'admin-notifications' : 'customer-notifications';
+      const expectedEmail = isAdmin ? undefined : normalizeEmail(user?.email);
 
-      const refresh = async () => {
+      const refresh = async (before) => {
+        const requestVersion = ++refreshVersionRef.current;
         try {
-          const result = await apiRequest(listAction);
+          const result = await apiRequest(listAction, {
+            query: {
+              ...(isAdmin ? { expectedAdminEmail: normalizeEmail(currentUser) } : { expectedEmail }),
+              ...(before ? { before } : {}),
+            },
+          });
           if (!active) return;
+          if (requestVersion !== refreshVersionRef.current) return;
           const next = Array.isArray(result.notifications) ? result.notifications : [];
-          const incoming = knownIds && next.find((notification) => !knownIds.has(notification.id));
-          knownIds = new Set(next.map((notification) => notification.id));
-          setNotifications(next);
+          const olderPage = Boolean(before);
+          const incoming = !olderPage && knownIds && next.find((notification) => !knownIds.has(notification.id));
+          knownIds = new Set([...(knownIds || []), ...next.map((notification) => notification.id)]);
+          setNotifications((current) => {
+            const merged = olderPage
+              ? [...current, ...next.filter((notification) => !current.some((item) => item.id === notification.id))]
+              : [...next, ...current.filter((notification) => !next.some((item) => item.id === notification.id))];
+            return merged.sort((left, right) => Number(right.id) - Number(left.id));
+          });
           setNotificationsOwner(owner);
+          setUnreadCount(Number.isFinite(Number(result.unreadCount)) ? Number(result.unreadCount) : next.filter((item) => !item.read).length);
+          setHasOlderNotifications(Boolean(result.hasOlder));
           setNotificationError('');
           if (incoming) {
             setToast(incoming);
@@ -55,10 +77,20 @@ export default function SiteNotificationBell({ className = '' }) {
           }
         } catch (error) {
           if (!active) return;
-          if (error.status === 401 || error.status === 403) {
+          if (error.status === 401 || error.status === 403 || error.status === 409) {
             setNotifications([]);
             setNotificationsOwner('');
+            setUnreadCount(0);
+            knownIds = new Set();
             setToast(null);
+            if (error.status === 409) {
+              if (isAdmin) refreshAdminProfile().catch((profileError) => {
+                console.error('Could not refresh admin identity after a notification account mismatch.', profileError);
+              });
+              else refreshSession?.().catch((sessionError) => {
+                console.error('Could not refresh customer identity after a notification account mismatch.', sessionError);
+              });
+            }
           }
           setNotificationError(error.message || 'Notifications could not be refreshed.');
         }
@@ -67,23 +99,28 @@ export default function SiteNotificationBell({ className = '' }) {
         if (document.visibilityState === 'visible') refresh();
       };
 
+      refreshNotificationsRef.current = (before) => refresh(before);
       refresh();
-      const intervalId = window.setInterval(refresh, 15_000);
+      const intervalId = window.setInterval(() => refresh(), 15_000);
       document.addEventListener('visibilitychange', refreshWhenVisible);
       return () => {
         active = false;
         window.clearInterval(intervalId);
         document.removeEventListener('visibilitychange', refreshWhenVisible);
         window.clearTimeout(toastTimer);
+        refreshNotificationsRef.current = null;
       };
     }
 
+    refreshNotificationsRef.current = null;
     setNotifications([]);
     setNotificationsOwner('');
+    setUnreadCount(0);
+    setHasOlderNotifications(false);
     setNotificationError('');
     setToast(null);
     return undefined;
-  }, [isAdmin, isLoggedIn, owner]);
+  }, [isAdmin, isLoggedIn, owner, user?.email]);
 
   useEffect(() => {
     const closeOnOutsideClick = (event) => {
@@ -103,16 +140,33 @@ export default function SiteNotificationBell({ className = '' }) {
 
   const openNotification = async (notification) => {
     if (isAdmin || isLoggedIn) {
+      refreshVersionRef.current += 1;
       try {
         await apiRequest(isAdmin ? 'admin-notifications-read' : 'customer-notifications-read', {
           method: 'POST',
-          body: { ids: [notification.id] },
+          body: {
+            ids: [notification.id],
+            ...(isAdmin ? { expectedAdminEmail: normalizeEmail(currentUser) } : { expectedEmail: normalizeEmail(user?.email) }),
+          },
         });
         setNotifications((current) => current.map((item) => (
           item.id === notification.id ? { ...item, read: true } : item
         )));
+        await refreshNotificationsRef.current?.();
         setNotificationError('');
       } catch (error) {
+        if (error.status === 409) {
+          setNotifications([]);
+          setNotificationsOwner('');
+          setUnreadCount(0);
+          setToast(null);
+          if (isAdmin) await refreshAdminProfile().catch((profileError) => {
+            console.error('Could not refresh admin identity after a notification account mismatch.', profileError);
+          });
+          else await refreshSession?.().catch((sessionError) => {
+            console.error('Could not refresh customer identity after a notification account mismatch.', sessionError);
+          });
+        }
         setNotificationError(error.message || 'The notification could not be marked as read.');
         return;
       }
@@ -124,14 +178,49 @@ export default function SiteNotificationBell({ className = '' }) {
 
   const markAllRead = async () => {
     if (isAdmin || isLoggedIn) {
+      refreshVersionRef.current += 1;
       try {
-        await apiRequest(isAdmin ? 'admin-notifications-read' : 'customer-notifications-read', { method: 'POST', body: { all: true } });
+        await apiRequest(isAdmin ? 'admin-notifications-read' : 'customer-notifications-read', {
+          method: 'POST',
+          body: {
+            all: true,
+            ...(isAdmin ? { expectedAdminEmail: normalizeEmail(currentUser) } : { expectedEmail: normalizeEmail(user?.email) }),
+          },
+        });
         setNotifications((current) => current.map((notification) => ({ ...notification, read: true })));
+        setUnreadCount(0);
+        await refreshNotificationsRef.current?.();
         setNotificationError('');
       } catch (error) {
+        if (error.status === 409) {
+          setNotifications([]);
+          setNotificationsOwner('');
+          setUnreadCount(0);
+          setToast(null);
+          if (isAdmin) await refreshAdminProfile().catch((profileError) => {
+            console.error('Could not refresh admin identity after a notification account mismatch.', profileError);
+          });
+          else await refreshSession?.().catch((sessionError) => {
+            console.error('Could not refresh customer identity after a notification account mismatch.', sessionError);
+          });
+        }
         setNotificationError(error.message || 'Notifications could not be marked as read.');
       }
       return;
+    }
+  };
+
+  const loadOlderNotifications = async () => {
+    const oldestId = visibleNotifications.reduce(
+      (oldest, notification) => Math.min(oldest, Number(notification.id) || oldest),
+      Number.POSITIVE_INFINITY,
+    );
+    if (!Number.isFinite(oldestId) || !refreshNotificationsRef.current) return;
+    setLoadingOlder(true);
+    try {
+      await refreshNotificationsRef.current(oldestId);
+    } finally {
+      setLoadingOlder(false);
     }
   };
 
@@ -201,6 +290,16 @@ export default function SiteNotificationBell({ className = '' }) {
               </div>
             )}
           </div>
+          {hasOlderNotifications && visibleNotifications.length > 0 && (
+            <button
+              type="button"
+              onClick={loadOlderNotifications}
+              disabled={loadingOlder}
+              className="w-full border-t border-slate-100 px-4 py-2.5 text-xs font-semibold text-secondary hover:bg-slate-50 disabled:opacity-50"
+            >
+              {loadingOlder ? 'Loading…' : 'Load older notifications'}
+            </button>
+          )}
         </section>
       )}
 

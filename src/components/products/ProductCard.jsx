@@ -17,13 +17,15 @@ export default function ProductCard({ product }) {
   const wishlisted = isWishlisted(product.id);
 
   const discount = calcDiscount(product.price, product.oldPrice);
-  const outOfStock = product.stock === 'Out of Stock' ||
-    (product.stockQuantity != null && Number(product.stockQuantity) <= 0);
+  const stockStatus = String(product.stock || '').trim().toLowerCase();
+  const outOfStock = stockStatus === 'out of stock' ||
+    (product.stockQuantity != null && Number(product.stockQuantity) <= 0) ||
+    (stockStatus === 'limited stock' &&
+      (!Number.isInteger(Number(product.stockQuantity)) || Number(product.stockQuantity) < 1));
 
   const handleAddToCart = () => addItem(product, 1);
   const handleBuyNow = () => {
-    addItem(product, 1);
-    navigate('/checkout');
+    if (addItem(product, 1)) navigate('/checkout');
   };
 
   return (
@@ -73,6 +75,9 @@ export default function ProductCard({ product }) {
             {product.name}
           </Link>
         </h3>
+        {(product.sku || product.productCode) && (
+          <p className="text-[11px] font-medium text-slate-500">SKU: {product.sku || product.productCode}</p>
+        )}
         <p className="line-clamp-1 text-xs text-slate-500">
           {product.specs.processor}
         </p>

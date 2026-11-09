@@ -2,6 +2,18 @@ import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 
+const sizedPromoImage = (source) => {
+  try {
+    const url = new URL(source, window.location.origin);
+    if (url.hostname !== 'images.unsplash.com') return source;
+    url.searchParams.set('w', '336');
+    url.searchParams.set('q', '75');
+    return url.href;
+  } catch {
+    return source;
+  }
+};
+
 export default function PromoCards() {
   const { promoCards } = useAdmin();
   const visibleCards = promoCards.filter((promo) => promo.active !== false);
@@ -28,7 +40,7 @@ export default function PromoCards() {
             </span>
           </div>
           <img
-            src={promo.image}
+            src={sizedPromoImage(promo.image)}
             alt={promo.title}
             loading="lazy"
             onError={(e) => {

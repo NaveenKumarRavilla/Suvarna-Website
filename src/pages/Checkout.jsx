@@ -1,10 +1,9 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Banknote, Check, CheckCircle2, ChevronRight, CreditCard, Landmark, LockKeyhole, MapPin, PackageCheck, Pencil, Plus, Smartphone, X } from 'lucide-react';
 import useCart from '../hooks/useCart';
 import { useAdmin } from '../context/AdminContext';
 import { useAuth } from '../context/AuthContext';
-import { apiRequest } from '../utils/api';
 import { FALLBACK_IMAGE, formatPrice, handleImgError } from '../utils/helpers';
 import Button from '../components/common/Button';
 
@@ -57,14 +56,18 @@ const clearOrderRequestKey = (key) => {
 };
 
 const paymentMethods = [
-  { id: 'upi', label: 'UPI', note: 'Pay by any UPI app', icon: Smartphone },
-  { id: 'card', label: 'Credit / Debit / ATM Card', note: 'Add and secure your card', icon: CreditCard },
-  { id: 'netbanking', label: 'Net Banking', note: 'Pay securely with your bank', icon: Landmark },
+  { id: 'upi', label: 'UPI', note: 'Currently unavailable', icon: Smartphone },
+  { id: 'card', label: 'Credit / Debit / ATM Card', note: 'Currently unavailable', icon: CreditCard },
+  { id: 'netbanking', label: 'Net Banking', note: 'Currently unavailable', icon: Landmark },
   { id: 'cod', label: 'Cash on Delivery', note: 'Pay at the time of delivery', icon: Banknote },
 ];
 const emptyAddress = { address: '', city: '', pin: '' };
 const inputCls = 'w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-secondary focus:ring-2 focus:ring-secondary/15';
 const savedFor = (user) => Array.isArray(user?.addresses) && user.addresses.length ? user.addresses : (user?.address || user?.city || user?.pin ? [{ id: 'legacy-address', label: 'Saved address', address: user.address || '', city: user.city || '', pin: user.pin || '' }] : []);
+const createAddressId = () =>
+  `address-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+const isAccountMismatch = (status, message) =>
+  status === 409 && /active customer account changed/i.test(String(message || ''));
 
 function Progress({ page }) {
   const labels = ['Address', 'Order Summary', 'Payment'];
@@ -88,7 +91,7 @@ export default function Checkout() {
     acknowledgePriceChanges,
   } = useCart();
   const { addOrder, refreshStorefrontData } = useAdmin();
-  const { user, isLoggedIn } = useAuth();
+  const { user, isLoggedIn, refreshSession, upsertAddress } = useAuth();
   const initialAddresses = savedFor(user);
   const [page, setPage] = useState('summary');
   const [addressPanel, setAddressPanel] = useState(() => initialAddresses.length === 0);
@@ -97,53 +100,170 @@ export default function Checkout() {
   const [orderTotal, setOrderTotal] = useState(0);
   const [addresses, setAddresses] = useState(initialAddresses);
   const [selectedId, setSelectedId] = useState(initialAddresses[0]?.id || 'new');
-  const [address, setAddress] = useState(() => initialAddresses[0] ? { address: initialAddresses[0].address, city: initialAddresses[0].city, pin: initialAddresses[0].pin } : emptyAddress);
+  const [confirmedAddress, setConfirmedAddress] = useState(() => initialAddresses[0] || null);
+  const [addressDraft, setAddressDraft] = useState(() => initialAddresses[0]
+    ? { address: initialAddresses[0].address || '', city: initialAddresses[0].city || '', pin: initialAddresses[0].pin || '' }
+    : emptyAddress);
   const [contact, setContact] = useState({ name: user?.name || '', email: user?.email || '', phone: user?.phone || '' });
+  const [contactDraft, setContactDraft] = useState({ name: user?.name || '', email: user?.email || '', phone: user?.phone || '' });
   const [saveForLater, setSaveForLater] = useState(true);
   const [customerError, setCustomerError] = useState('');
   const [placingOrder, setPlacingOrder] = useState(false);
   const placingOrderRef = useRef(false);
   const orderRequestRef = useRef({ fingerprint: '', key: '' });
+  const addressDraftIdRef = useRef(initialAddresses.length ? '' : createAddressId());
+  const addressPanelRef = useRef(null);
+  const addressCloseButtonRef = useRef(null);
+  const addressTriggerRef = useRef(null);
   const hasUnreviewedPriceChanges = items.some((item) => item.priceChanged);
-  const hasUnavailableItems = items.some((item) => item.unavailable);
+  const hasUnavailableItems = items.some((item) => item.unavailable || item.removedFromCatalogue);
+  const confirmedAddressIsValid = Boolean(
+    confirmedAddress?.address?.trim() &&
+    confirmedAddress?.city?.trim() &&
+    /^\d{6}$/.test(String(confirmedAddress?.pin || '').trim()) &&
+    contact.name.trim() &&
+    /^\+?[0-9]{10,15}$/.test(contact.phone.trim()) &&
+    (!contact.email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email.trim()))
+  );
   const selectedPayment = paymentMethods.find((method) => method.id === payment);
   const PaymentIcon = selectedPayment.icon;
-  const activeAddress = addresses.find((item) => item.id === selectedId);
-
-  const chooseAddress = (item) => { setSelectedId(item.id); setAddress({ address: item.address || '', city: item.city || '', pin: item.pin || '' }); };
-  const addNew = () => { setSelectedId('new'); setAddress(emptyAddress); };
-  const saveAddress = async () => {
-    const invalid = ['delivery-name', 'delivery-phone', 'delivery-address', 'delivery-city', 'delivery-pin'].find((id) => !document.getElementById(id)?.reportValidity());
-    if (invalid) return;
-    const selected = addresses.find((item) => String(item.id) === String(selectedId));
-    const addressId = selected ? selected.id : `address-${globalThis.crypto?.randomUUID?.() || Date.now()}`;
-    const updatedAddress = {
-      id: addressId,
-      label: selected?.label || contact.name || `Address ${addresses.length + 1}`,
-      ...address,
-    };
-    const next = selected
-      ? addresses.map((item) => String(item.id) === String(selected.id) ? updatedAddress : item)
-      : [...addresses, updatedAddress];
-    if (saveForLater && isLoggedIn) {
-      try {
-        const result = await apiRequest('customer-address-upsert', {
-          method: 'POST',
-          body: { address: updatedAddress },
-        });
-        setAddresses(Array.isArray(result.user?.addresses) ? result.user.addresses : next);
-        setCustomerError('');
-      } catch (error) {
-        setCustomerError(error.message);
-        return;
-      }
+  const clearProtectedAddressData = () => {
+    setAddresses([]);
+    setConfirmedAddress(null);
+    setSelectedId('new');
+    setAddressDraft(emptyAddress);
+    addressDraftIdRef.current = '';
+    setAddressPanel(false);
+    setPage('summary');
+  };
+  const openAddressPanel = () => {
+    addressTriggerRef.current = document.activeElement;
+    setContactDraft(contact);
+    if (confirmedAddress) {
+      setSelectedId(confirmedAddress.id || 'new');
+      setAddressDraft({
+        address: confirmedAddress.address || '',
+        city: confirmedAddress.city || '',
+        pin: confirmedAddress.pin || '',
+      });
+      addressDraftIdRef.current = '';
     } else {
-      setAddresses(next);
+      setSelectedId('new');
+      setAddressDraft(emptyAddress);
+      if (!addressDraftIdRef.current) addressDraftIdRef.current = createAddressId();
     }
-    setSelectedId(addressId);
+    setAddressPanel(true);
+  };
+  const discardAddressDraft = () => {
+    setAddressDraft(confirmedAddress
+      ? {
+          address: confirmedAddress.address || '',
+          city: confirmedAddress.city || '',
+          pin: confirmedAddress.pin || '',
+        }
+      : emptyAddress);
+    setSelectedId(confirmedAddress?.id || 'new');
+    setContactDraft(contact);
+    if (!confirmedAddress) addressDraftIdRef.current = '';
     setAddressPanel(false);
   };
+  const chooseAddress = (item) => {
+    setSelectedId(item.id);
+    setAddressDraft({ address: item.address || '', city: item.city || '', pin: item.pin || '' });
+    addressDraftIdRef.current = '';
+  };
+  const addNew = () => {
+    setSelectedId('new');
+    setAddressDraft(emptyAddress);
+    addressDraftIdRef.current = createAddressId();
+  };
+  const saveAddress = async () => {
+    const invalid = ['delivery-name', 'delivery-phone', 'delivery-email', 'delivery-address', 'delivery-city', 'delivery-pin'].find((id) => !document.getElementById(id)?.reportValidity());
+    if (invalid) return;
+    const selected = addresses.find((item) => String(item.id) === String(selectedId));
+    const hasVersion = selected?.version != null && Number.isInteger(Number(selected.version));
+    const addressId = hasVersion
+      ? selected.id
+      : (addressDraftIdRef.current || (addressDraftIdRef.current = createAddressId()));
+    const updatedAddress = {
+      id: addressId,
+      label: selected?.label || contactDraft.name || `Address ${addresses.length + 1}`,
+      ...addressDraft,
+    };
+    let savedAddress = updatedAddress;
+    let usedServerAddressList = false;
+    if (saveForLater && isLoggedIn) {
+      const result = await upsertAddress(updatedAddress, hasVersion ? Number(selected.version) : 0);
+      if (!result.ok) {
+        if ([401, 403, 409].includes(result.status)) {
+          clearProtectedAddressData();
+          if (result.status !== 409) await refreshSession();
+        }
+        setCustomerError(result.error);
+        return;
+      }
+      savedAddress = result.address ||
+        result.addresses?.find((item) => String(item.id) === String(addressId)) ||
+        updatedAddress;
+      if (Array.isArray(result.addresses)) {
+        setAddresses(result.addresses);
+        usedServerAddressList = true;
+      }
+    }
+    if (!usedServerAddressList) {
+      setAddresses((current) => selected
+        ? current.map((item) => String(item.id) === String(selected.id) ? savedAddress : item)
+        : [...current, savedAddress]);
+    }
+    setConfirmedAddress(savedAddress);
+    setContact(contactDraft);
+    setSelectedId(savedAddress.id);
+    addressDraftIdRef.current = '';
+    setAddressDraft({ address: savedAddress.address || '', city: savedAddress.city || '', pin: savedAddress.pin || '' });
+    setCustomerError('');
+    setAddressPanel(false);
+  };
+  useEffect(() => {
+    if (!addressPanel) return undefined;
+    addressCloseButtonRef.current?.focus();
+    const handleDialogKeys = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        discardAddressDraft();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = [...(addressPanelRef.current?.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      ) || [])].filter((element) => element.getAttribute('aria-hidden') !== 'true');
+      if (!focusable.length) {
+        event.preventDefault();
+        addressPanelRef.current?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !addressPanelRef.current?.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !addressPanelRef.current?.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleDialogKeys);
+    return () => {
+      document.removeEventListener('keydown', handleDialogKeys);
+      if (addressTriggerRef.current?.isConnected) addressTriggerRef.current.focus();
+    };
+  }, [addressPanel]);
   const placeOrder = async () => {
+    if (!confirmedAddressIsValid) {
+      setPage('summary');
+      setCustomerError('Confirm a valid delivery address before placing your order.');
+      openAddressPanel();
+      return;
+    }
     if (hasUnreviewedPriceChanges) {
       setCustomerError('Review the updated product prices before placing your order.');
       return;
@@ -174,7 +294,11 @@ export default function Checkout() {
         })),
         total,
         payment,
-        shippingAddress: address,
+        shippingAddress: {
+          address: confirmedAddress.address,
+          city: confirmedAddress.city,
+          pin: confirmedAddress.pin,
+        },
         date: new Date().toISOString().slice(0, 10),
       };
       const fingerprint = JSON.stringify({
@@ -196,10 +320,15 @@ export default function Checkout() {
       const result = await addOrder({ ...order, idempotencyKey });
       if (!result.ok) {
         if (result.status === 409) {
-          try {
-            await refreshStorefrontData();
-          } catch (error) {
-            console.error('Could not refresh product prices after checkout validation failed.', error);
+          if (isAccountMismatch(result.status, result.error)) {
+            clearProtectedAddressData();
+            await refreshSession();
+          } else {
+            try {
+              await refreshStorefrontData();
+            } catch (error) {
+              console.error('Could not refresh product prices after checkout validation failed.', error);
+            }
           }
         }
         setCustomerError(result.error);
@@ -212,6 +341,10 @@ export default function Checkout() {
       clearCart();
       window.scrollTo(0, 0);
     } catch (error) {
+      if (isAccountMismatch(error.status, error.message)) {
+        clearProtectedAddressData();
+        await refreshSession();
+      }
       setCustomerError(error.message || 'Could not place your order. Please try again.');
     } finally {
       placingOrderRef.current = false;
@@ -226,15 +359,15 @@ export default function Checkout() {
     {customerError && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{customerError}</p>}
     {hasUnreviewedPriceChanges && <div role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950"><p className="font-semibold">Product prices changed. Review these updated prices before placing your order:</p><ul className="mt-2 space-y-1">{items.filter((item) => item.priceChanged).map((item) => <li key={item.id}>{item.name}: {formatPrice(item.previousPrice)} → {formatPrice(item.price)}</li>)}</ul><Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => { acknowledgePriceChanges(); setCustomerError(''); }}>I have reviewed the updated prices</Button></div>}
     {hasUnavailableItems && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">One or more products are no longer available. Remove them from your cart before continuing.</p>}
-    {page === 'summary' && <div className="grid gap-4 pt-3 min-[480px]:grid-cols-[minmax(0,1fr)_260px]"><section className="space-y-3"><div className="bg-white px-4 py-4 shadow-sm sm:px-5"><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-bold text-primary">Deliver to:</p><p className="mt-2 text-sm font-semibold text-primary">{contact.name || 'Add your delivery address'}</p><p className="mt-1 max-w-3xl text-sm leading-6 text-slate-700">{address.address ? <>{address.address}, {address.city} {address.pin}</> : 'Select or add an address to continue.'}</p><p className="mt-1 text-sm text-slate-700">{contact.phone}</p></div><button type="button" onClick={() => setAddressPanel(true)} className="shrink-0 rounded border border-slate-200 px-4 py-2 text-xs font-semibold text-secondary hover:border-secondary">{address.address ? 'Change' : 'Add address'}</button></div></div><div className="bg-white shadow-sm"><div className="max-h-[360px] divide-y divide-slate-100 overflow-y-auto">{items.map((item) => <article key={item.id} className="flex gap-4 px-4 py-4 sm:px-5"><img src={item.image || FALLBACK_IMAGE} alt="" onError={handleImgError} className="h-20 w-20 shrink-0 object-contain" /><div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold text-primary sm:text-base">{item.name}</h2><p className="mt-1 text-xs text-slate-500">{item.brand} · Qty: {item.qty}</p><p className="mt-3 text-sm font-bold text-primary">{formatPrice(item.price * item.qty)} <span className="ml-1 text-xs font-medium text-slate-400 line-through">{item.oldPrice ? formatPrice(item.oldPrice * item.qty) : ''}</span></p><p className="mt-3 text-xs text-secondary">Delivery will be confirmed after your order.</p></div></article>)}</div></div></section><div className="space-y-3 min-[480px]:sticky min-[480px]:top-3 min-[480px]:h-fit"><PriceDetails subtotal={subtotal} savings={savings} delivery={delivery} total={total} action={<Button type="button" variant="accent" className="w-full justify-center" onClick={() => address.address ? setPage('payment') : setAddressPanel(true)}>Continue</Button>} /><p className="px-2 text-xs leading-relaxed text-slate-500">By continuing, you agree to Suvarna IT Enterprises’ terms and privacy policy.</p></div></div>}
+    {page === 'summary' && <div className="grid gap-4 pt-3 min-[480px]:grid-cols-[minmax(0,1fr)_260px]"><section className="space-y-3"><div className="bg-white px-4 py-4 shadow-sm sm:px-5"><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-bold text-primary">Deliver to:</p><p className="mt-2 text-sm font-semibold text-primary">{contact.name || 'Add your delivery address'}</p><p className="mt-1 max-w-3xl text-sm leading-6 text-slate-700">{confirmedAddress?.address ? <>{confirmedAddress.address}, {confirmedAddress.city} {confirmedAddress.pin}</> : 'Select or add an address to continue.'}</p><p className="mt-1 text-sm text-slate-700">{contact.phone}</p></div><button type="button" onClick={openAddressPanel} className="shrink-0 rounded border border-slate-200 px-4 py-2 text-xs font-semibold text-secondary hover:border-secondary">{confirmedAddress?.address ? 'Change' : 'Add address'}</button></div></div><div className="bg-white shadow-sm"><div className="max-h-[360px] divide-y divide-slate-100 overflow-y-auto">{items.map((item) => <article key={item.id} className="flex gap-4 px-4 py-4 sm:px-5"><img src={item.image || FALLBACK_IMAGE} alt="" onError={handleImgError} className="h-20 w-20 shrink-0 object-contain" /><div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold text-primary sm:text-base">{item.name}</h2><p className="mt-1 text-xs text-slate-500">{item.brand} · Qty: {item.qty}</p><p className="mt-3 text-sm font-bold text-primary">{formatPrice(item.price * item.qty)} <span className="ml-1 text-xs font-medium text-slate-400 line-through">{item.oldPrice ? formatPrice(item.oldPrice * item.qty) : ''}</span></p><p className="mt-3 text-xs text-secondary">Delivery will be confirmed after your order.</p></div></article>)}</div></div></section><div className="space-y-3 min-[480px]:sticky min-[480px]:top-3 min-[480px]:h-fit"><PriceDetails subtotal={subtotal} savings={savings} delivery={delivery} total={total} action={<Button type="button" variant="accent" className="w-full justify-center" onClick={() => { if (!confirmedAddressIsValid) { setCustomerError('Confirm a valid delivery address before continuing.'); openAddressPanel(); return; } setCustomerError(''); setPage('payment'); }}>Continue</Button>} /><p className="px-2 text-xs leading-relaxed text-slate-500">By continuing, you agree to Suvarna IT Enterprises’ terms and privacy policy.</p></div></div>}
     {page === 'payment' && <div className="checkout-payment-layout grid gap-4 pt-3"><aside className="bg-white p-3 shadow-sm sm:p-4"><h2 className="mb-3 px-1 text-sm font-bold text-primary">Payment method</h2><div className="space-y-2">{paymentMethods.map(({ id, label, note, icon: Icon }) => <button key={id} type="button" disabled={id !== 'cod'} aria-pressed={payment === id} onClick={() => setPayment(id)} className={`flex min-h-[68px] w-full items-center gap-3 rounded-md border p-3 text-left transition ${id === 'cod' ? 'border-secondary bg-secondary/5 ring-1 ring-secondary' : 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-50'}`}><Icon size={20} className="shrink-0 text-primary" /><span className="min-w-0"><b className="block text-sm leading-5 text-primary">{label}</b><small className="mt-0.5 block text-xs leading-4 text-slate-500">{note}</small></span></button>)}</div></aside><section className="min-h-[360px] bg-white p-5 shadow-sm sm:p-6"><div className="mx-auto max-w-lg"><div className="flex h-11 w-11 items-center justify-center rounded-md bg-secondary/10 text-secondary"><PaymentIcon size={22} /></div><h2 className="mt-4 text-lg font-bold text-primary">Cash on Delivery</h2><p className="mt-1 text-sm text-slate-500">Pay at the time of delivery.</p><div className="mt-6 rounded-md border border-slate-200 p-4 text-sm leading-6 text-slate-600"><p className="font-semibold text-primary">Cash payment</p><p className="mt-1">Pay {formatPrice(total)} in cash when your order arrives at the delivery address.</p><p className="mt-2 text-xs text-slate-500">Please keep the amount ready. Delivery fees are included in the total.</p></div></div></section><div className="checkout-payment-price"><PriceDetails subtotal={subtotal} savings={savings} delivery={delivery} total={total} action={<div className="space-y-2"><Button type="button" variant="accent" className="w-full justify-center" onClick={placeOrder} disabled={placingOrder || hasUnreviewedPriceChanges || hasUnavailableItems}>{placingOrder ? 'Placing Order…' : 'Place Order'}</Button><Button type="button" variant="outline" className="w-full justify-center" onClick={() => setPage('summary')}>Order Summary</Button></div>} /></div></div>}
   </div>
   {addressPanel && (
-    <div className="fixed inset-0 z-50 flex justify-end bg-primary/60">
-      <section className="h-full w-full max-w-xl overflow-y-auto bg-white shadow-2xl">
+    <div role="dialog" aria-modal="true" aria-labelledby="checkout-address-title" className="fixed inset-0 z-50 flex justify-end bg-primary/60" onMouseDown={(event) => { if (event.target === event.currentTarget) discardAddressDraft(); }}>
+      <section ref={addressPanelRef} tabIndex={-1} className="h-full w-full max-w-xl overflow-y-auto bg-white shadow-2xl">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4">
-          <h2 className="text-base font-bold text-primary">Select delivery address</h2>
-          <button type="button" onClick={() => setAddressPanel(false)} className="rounded p-1 text-slate-500 hover:bg-slate-100"><X size={20} /></button>
+          <h2 id="checkout-address-title" className="text-base font-bold text-primary">Select delivery address</h2>
+          <button ref={addressCloseButtonRef} type="button" aria-label="Close address panel" onClick={discardAddressDraft} className="rounded p-1 text-slate-500 hover:bg-slate-100"><X size={20} /></button>
         </div>
         <div className="p-5">
           <div className="mb-4 flex items-center justify-between">
@@ -245,12 +378,12 @@ export default function Checkout() {
           <div className="mt-5 border-t border-dashed border-slate-200 pt-5">
             <p className="mb-3 text-sm font-bold text-primary">{selectedId === 'new' ? 'Add new address' : 'Edit selected address'}</p>
             <div className="grid gap-3 sm:grid-cols-2">
-              <label className="sm:col-span-2"><span className="mb-1 block text-xs font-semibold text-slate-600">Full name *</span><input id="delivery-name" required value={contact.name} onChange={(e) => setContact((v) => ({ ...v, name: e.target.value }))} className={inputCls} /></label>
-              <label><span className="mb-1 block text-xs font-semibold text-slate-600">Mobile number *</span><input id="delivery-phone" required pattern="[+]?[0-9]{10,15}" value={contact.phone} onChange={(e) => setContact((v) => ({ ...v, phone: e.target.value }))} className={inputCls} /></label>
-              <label><span className="mb-1 block text-xs font-semibold text-slate-600">Email</span><input type="email" value={contact.email} onChange={(e) => setContact((v) => ({ ...v, email: e.target.value }))} className={inputCls} /></label>
-              <label className="sm:col-span-2"><span className="mb-1 block text-xs font-semibold text-slate-600">Address *</span><textarea id="delivery-address" required rows="2" value={address.address} onChange={(e) => setAddress((v) => ({ ...v, address: e.target.value }))} className={inputCls} /></label>
-              <label><span className="mb-1 block text-xs font-semibold text-slate-600">City *</span><input id="delivery-city" required value={address.city} onChange={(e) => setAddress((v) => ({ ...v, city: e.target.value }))} className={inputCls} /></label>
-              <label><span className="mb-1 block text-xs font-semibold text-slate-600">PIN code *</span><input id="delivery-pin" required pattern="[0-9]{6}" value={address.pin} onChange={(e) => setAddress((v) => ({ ...v, pin: e.target.value }))} className={inputCls} /></label>
+              <label className="sm:col-span-2"><span className="mb-1 block text-xs font-semibold text-slate-600">Full name *</span><input id="delivery-name" required value={contactDraft.name} onChange={(e) => setContactDraft((v) => ({ ...v, name: e.target.value }))} className={inputCls} /></label>
+              <label><span className="mb-1 block text-xs font-semibold text-slate-600">Mobile number *</span><input id="delivery-phone" required pattern="[+]?[0-9]{10,15}" value={contactDraft.phone} onChange={(e) => setContactDraft((v) => ({ ...v, phone: e.target.value }))} className={inputCls} /></label>
+              <label><span className="mb-1 block text-xs font-semibold text-slate-600">Email</span><input id="delivery-email" type="email" value={contactDraft.email} onChange={(e) => setContactDraft((v) => ({ ...v, email: e.target.value }))} className={inputCls} /></label>
+              <label className="sm:col-span-2"><span className="mb-1 block text-xs font-semibold text-slate-600">Address *</span><textarea id="delivery-address" required rows="2" value={addressDraft.address} onChange={(e) => setAddressDraft((v) => ({ ...v, address: e.target.value }))} className={inputCls} /></label>
+              <label><span className="mb-1 block text-xs font-semibold text-slate-600">City *</span><input id="delivery-city" required value={addressDraft.city} onChange={(e) => setAddressDraft((v) => ({ ...v, city: e.target.value }))} className={inputCls} /></label>
+              <label><span className="mb-1 block text-xs font-semibold text-slate-600">PIN code *</span><input id="delivery-pin" required pattern="[0-9]{6}" value={addressDraft.pin} onChange={(e) => setAddressDraft((v) => ({ ...v, pin: e.target.value }))} className={inputCls} /></label>
             </div>
             {isLoggedIn && <label className="mt-4 flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={saveForLater} onChange={(e) => setSaveForLater(e.target.checked)} className="h-4 w-4 accent-secondary" /> Save this address to my profile</label>}
             <Button type="button" variant="primary" className="mt-5" onClick={saveAddress}>Use this address</Button>

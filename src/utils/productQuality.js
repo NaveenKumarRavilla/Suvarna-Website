@@ -8,10 +8,33 @@ const scalarText = (value) => {
   return '';
 };
 
-export const getProductPublishabilityIssue = (product) => {
+const productNameKey = (product) => [
+  String(product?.brand || '').trim().toLowerCase(),
+  String(product?.name || '').trim().toLowerCase(),
+].join('|');
+const productSku = (product) => String(product?.sku || product?.productCode || '').trim().toLowerCase();
+
+export const getProductPublishabilityIssue = (product, products = []) => {
   const name = String(product?.name || '').trim();
   const brand = String(product?.brand || '').trim();
   if (!name || !brand) return 'Add a product name and brand.';
+  if (/^copy of\b/i.test(name)) return 'This copied listing needs review and a distinct product name before publishing.';
+  if (String(product.stock || '').trim().toLowerCase() === 'limited stock' &&
+      (!Number.isInteger(Number(product.stockQuantity)) || Number(product.stockQuantity) < 1)) {
+    return 'Limited Stock products need a positive available-unit quantity.';
+  }
+  const sku = productSku(product);
+  const uniqueSku = sku && products.filter((candidate) => productSku(candidate) === sku).length === 1;
+  const duplicate = products.some((candidate) => {
+    const candidateSku = productSku(candidate);
+    const separatelyIdentified = Boolean(uniqueSku && candidateSku !== sku);
+    return String(candidate.id) !== String(product.id) &&
+      productNameKey(candidate) === productNameKey(product) &&
+      products.indexOf(candidate) < products.indexOf(product) &&
+      !getProductPublishabilityIssue(candidate) &&
+      !separatelyIdentified;
+  });
+  if (duplicate) return 'This listing duplicates an existing brand and product name; review it and give genuine variants distinct names before publishing.';
 
   const description = String(product.description || '').trim();
   if (Array.from(description).length < 20) return 'Description must be at least 20 characters.';
@@ -31,3 +54,19 @@ export const getProductPublishabilityIssue = (product) => {
 };
 
 export const isPublishableProduct = (product) => !getProductPublishabilityIssue(product);
+
+export const getStorefrontProducts = (products) => {
+  const published = [];
+  const names = new Set();
+  const skus = new Set();
+  products.forEach((product) => {
+    const key = productNameKey(product);
+    const sku = productSku(product);
+    const hasUniqueSku = sku && !skus.has(sku);
+    if (!isPublishableProduct(product) || (names.has(key) && !hasUniqueSku)) return;
+    names.add(key);
+    if (sku) skus.add(sku);
+    published.push(product);
+  });
+  return published;
+};

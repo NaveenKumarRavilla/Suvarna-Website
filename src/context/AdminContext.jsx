@@ -4,7 +4,7 @@ import { heroSlides as seedBanners, promoCards as seedPromoCards } from '../data
 import { defaultManagedCategories, normalizeCategoryId } from '../data/categories';
 import { defaultPolicies } from '../data/policies';
 import { apiRequest } from '../utils/api';
-import { isPublishableProduct } from '../utils/productQuality';
+import { getStorefrontProducts } from '../utils/productQuality';
 import { applySharedStoreDraftChoice, rebaseSharedStoreDraft } from '../utils/sharedStoreDraft';
 
 const AdminContext = createContext(null);
@@ -1093,7 +1093,7 @@ export function AdminProvider({ children }) {
         }));
         return true;
       },
-      storefrontProducts: store.products.filter(isPublishableProduct),
+      storefrontProducts: getStorefrontProducts(store.products),
       saveProductBatch,
       addProduct: (item) => saveProductBatch([{ product: item }]),
       updateProduct: (id, patch) => saveProductBatch([{ id, product: patch }]),

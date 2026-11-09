@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Filter, X } from 'lucide-react';
 import { useAdmin } from '../context/AdminContext';
@@ -16,20 +16,29 @@ const hiddenCategories = ['home', 'contact', 'services', 'offers'];
 
 export default function Products() {
   const { storefrontProducts: products, categories: managedCategories } = useAdmin();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const search = (searchParams.get('search') || '').toLowerCase();
-  const urlCategory = searchParams.get('category') || 'all';
+  const rawUrlCategory = searchParams.get('category') || 'all';
+  const normalizedUrlCategory = normalizeCategoryId(rawUrlCategory);
+  const urlCategory = normalizedUrlCategory === 'desktop' ? 'desktops' : normalizedUrlCategory;
   const offersOnly = searchParams.get('offers') === 'true';
   const maxFilterPrice = Math.max(
     500000,
     Math.ceil(Math.max(0, ...products.map((product) => Number(product.price) || 0)) / PRICE_FILTER_STEP) * PRICE_FILTER_STEP
   );
+  const urlMaxPrice = Number(searchParams.get('maxPrice'));
+  const urlBrands = searchParams.getAll('brand');
   const [filters, setFilters] = useState({
-    ...defaultFilters(maxFilterPrice),
+    ...defaultFilters(
+      Number.isFinite(urlMaxPrice) && urlMaxPrice >= MIN_FILTER_PRICE
+        ? Math.min(maxFilterPrice, urlMaxPrice)
+        : maxFilterPrice
+    ),
     category: normalizeCategoryId(urlCategory),
+    brands: urlBrands,
   });
-  const previousMaxFilterPrice = useRef(maxFilterPrice);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const isLegacyDesktopCategory = normalizedUrlCategory === 'desktop';
 
   const availableCategories = useMemo(() => {
     const categoryMap = new Map(
@@ -58,15 +67,24 @@ export default function Products() {
   );
 
   useEffect(() => {
+    if (!isLegacyDesktopCategory) return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('category', 'desktops');
+    setSearchParams(nextParams, { replace: true });
+  }, [isLegacyDesktopCategory, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const urlPrice = Number(searchParams.get('maxPrice'));
+    const maxPrice = Number.isFinite(urlPrice) && urlPrice >= MIN_FILTER_PRICE
+      ? Math.min(maxFilterPrice, urlPrice)
+      : maxFilterPrice;
     setFilters((current) => ({
       ...current,
-      category: normalizeCategoryId(urlCategory),
-      maxPrice: current.maxPrice >= previousMaxFilterPrice.current
-        ? maxFilterPrice
-        : current.maxPrice,
+      category: urlCategory,
+      maxPrice,
+      brands: searchParams.getAll('brand'),
     }));
-    previousMaxFilterPrice.current = maxFilterPrice;
-  }, [urlCategory, maxFilterPrice]);
+  }, [urlCategory, maxFilterPrice, searchParams]);
 
   const filtered = useMemo(
     () =>
@@ -104,6 +122,30 @@ export default function Products() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const applyFilters = (nextFilters) => {
+    const normalizedFilters = {
+      ...nextFilters,
+      category: normalizeCategoryId(nextFilters.category || 'all'),
+    };
+    setFilters(normalizedFilters);
+    const nextParams = new URLSearchParams(searchParams);
+    if (normalizedFilters.category === 'all') nextParams.delete('category');
+    else nextParams.set('category', normalizedFilters.category);
+    if (normalizedFilters.maxPrice >= maxFilterPrice) nextParams.delete('maxPrice');
+    else nextParams.set('maxPrice', String(normalizedFilters.maxPrice));
+    nextParams.delete('brand');
+    normalizedFilters.brands.forEach((brand) => nextParams.append('brand', brand));
+    setSearchParams(nextParams);
+  };
+
+  const clearCatalogueFilters = () => {
+    setFilters(defaultFilters(maxFilterPrice));
+    setMobileFiltersOpen(false);
+    const nextParams = new URLSearchParams(searchParams);
+    ['search', 'category', 'offers', 'maxPrice', 'brand'].forEach((key) => nextParams.delete(key));
+    setSearchParams(nextParams);
+  };
+
   return (
     <div className="mx-auto max-w-8xl px-4 py-8">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -132,12 +174,9 @@ export default function Products() {
               categories={availableCategories}
               brands={availableBrands}
               maxPrice={maxFilterPrice}
-              onChange={setFilters}
+              onChange={applyFilters}
               onFilterApplied={handleFiltersApplied}
-              onClear={() => {
-                setFilters(defaultFilters(maxFilterPrice));
-                setMobileFiltersOpen(false);
-              }}
+              onClear={clearCatalogueFilters}
             />
           </div>
         </aside>
@@ -145,7 +184,7 @@ export default function Products() {
           <ProductGrid
             products={filtered}
             colsClass="xl:grid-cols-3 2xl:grid-cols-4"
-            onReset={() => setFilters(defaultFilters(maxFilterPrice))}
+            onReset={clearCatalogueFilters}
           />
         </main>
       </div>

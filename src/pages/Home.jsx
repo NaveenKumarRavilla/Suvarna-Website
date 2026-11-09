@@ -9,6 +9,7 @@ import ActiveOffers from '../components/home/ActiveOffers';
 export default function Home() {
   return (
     <>
+      <h1 className="sr-only">Suvarna IT Enterprises: Laptops, Desktops, Servers and IT Solutions</h1>
       <section className="mx-auto max-w-8xl px-4 pt-5">
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">

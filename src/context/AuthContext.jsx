@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { GOOGLE_CLIENT_ID } from '../config/googleAuth';
 import { apiRequest } from '../utils/api';
 
@@ -94,12 +94,27 @@ export function AuthProvider({ children }) {
       .then((result) => {
         if (active) setUser(result.user);
       })
-      .catch(() => {
-        if (active) setUser(null);
+      .catch((error) => {
+        if (active && [401, 403].includes(error.status)) setUser(null);
       });
     return () => {
       active = false;
     };
+  }, []);
+
+  const refreshSession = useCallback(async () => {
+    try {
+      const result = await apiRequest('customer-session');
+      if (!result?.user) throw new Error('The customer session response was invalid.');
+      setUser(result.user);
+      return { ok: true, user: result.user };
+    } catch (error) {
+      if ([401, 403].includes(error.status)) {
+        setUser(null);
+        apiRequest('customer-logout', { method: 'POST' }).catch(() => {});
+      }
+      return { ok: false, error: error.message, status: error.status };
+    }
   }, []);
 
   const value = useMemo(() => {
@@ -112,6 +127,7 @@ export function AuthProvider({ children }) {
       isLoggedIn: !!user,
       googleReady,
       googleLoadError,
+      refreshSession,
 
       register: async ({ name, email, phone, password }) => {
         const cleanEmail = normalizeEmail(email);
@@ -148,16 +164,43 @@ export function AuthProvider({ children }) {
           return { ok: false, error: 'Password must be at least 8 characters.' };
         }
 
-        return apiRequest('customer-set-password', { method: 'POST', body: { password } })
+        return apiRequest('customer-set-password', {
+          method: 'POST',
+          body: { password, expectedEmail: normalizeEmail(user.email) },
+        })
           .then(() => {
             const providers = [...new Set([...(user.providers || (user.provider ? [user.provider] : [])), 'email'])];
             persist({ ...user, provider: 'email', providers });
             return { ok: true };
           })
-          .catch((error) => ({ ok: false, error: error.message }));
+          .catch(async (error) => {
+            if (error.status === 409) {
+              setUser(null);
+              await refreshSession();
+            }
+            return { ok: false, error: error.message, status: error.status };
+          });
       },
 
-      loginWithGoogle: () => new Promise((resolve) => {
+      setPasswordForRecovery: async (recoveryToken, password) => {
+        if (!recoveryToken) {
+          return { ok: false, error: 'Verify the account with Google before setting a password.' };
+        }
+        if (password.length < 8) {
+          return { ok: false, error: 'Password must be at least 8 characters.' };
+        }
+        try {
+          await apiRequest('customer-set-password', {
+            method: 'POST',
+            body: { flow: 'recovery', recoveryToken, password },
+          });
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: error.message, status: error.status };
+        }
+      },
+
+      loginWithGoogle: (options = {}) => new Promise((resolve) => {
         let settled = false;
         const finish = (result) => {
           if (settled) return;
@@ -185,9 +228,24 @@ export function AuthProvider({ children }) {
                 try {
                   const result = await apiRequest('customer-google', {
                     method: 'POST',
-                    body: { accessToken: tokenResponse.access_token },
+                    body: {
+                      accessToken: tokenResponse.access_token,
+                      ...(options.purpose ? { purpose: options.purpose } : {}),
+                    },
                   });
                   if (settled) return;
+                  if (options.purpose === 'password-recovery') {
+                    if (!result.recoveryToken || !result.email) {
+                      throw new Error('The password recovery response was invalid.');
+                    }
+                    finish({
+                      ok: true,
+                      recoveryToken: result.recoveryToken,
+                      email: result.email,
+                      expiresIn: result.expiresIn,
+                    });
+                    return;
+                  }
                   persist(result.user);
                   finish({ ok: true, user: result.user });
                 } catch (error) {
@@ -224,15 +282,74 @@ export function AuthProvider({ children }) {
       updateProfile: async (patch) => {
         if (!user) return { ok: false, error: 'Log in before updating your profile.' };
         try {
-          const result = await apiRequest('customer-profile', { method: 'POST', body: patch });
+          const result = await apiRequest('customer-profile', {
+            method: 'POST',
+            body: { ...patch, expectedEmail: normalizeEmail(user.email) },
+          });
           persist(result.user);
           return { ok: true };
         } catch (error) {
-          return { ok: false, error: error.message };
+          if (error.status === 409) {
+            setUser(null);
+            await refreshSession();
+          }
+          return { ok: false, error: error.message, status: error.status };
+        }
+      },
+
+      upsertAddress: async (address, expectedVersion) => {
+        if (!user?.email) return { ok: false, error: 'Log in before saving an address.' };
+        const body = { expectedEmail: normalizeEmail(user.email), address };
+        if (expectedVersion !== undefined) body.expectedVersion = expectedVersion;
+        try {
+          const result = await apiRequest('customer-address-upsert', { method: 'POST', body });
+          let updatedUser = result.user;
+          if (updatedUser) persist(updatedUser);
+          else {
+            const refreshed = await refreshSession();
+            if (!refreshed.ok) {
+              return { ok: false, error: refreshed.error, status: refreshed.status };
+            }
+            updatedUser = refreshed.user;
+          }
+          return {
+            ok: true,
+            address: result.address,
+            addresses: updatedUser?.addresses,
+          };
+        } catch (error) {
+          if (error.status === 409) {
+            setUser(null);
+            await refreshSession();
+          }
+          return { ok: false, error: error.message, status: error.status };
+        }
+      },
+
+      deleteAddress: async (id, expectedVersion) => {
+        if (!user?.email) return { ok: false, error: 'Log in before deleting an address.' };
+        const body = { expectedEmail: normalizeEmail(user.email), id };
+        if (expectedVersion !== undefined) body.expectedVersion = expectedVersion;
+        try {
+          const result = await apiRequest('customer-address-delete', { method: 'POST', body });
+          if (result.user) persist(result.user);
+          else {
+            const refreshed = await refreshSession();
+            if (!refreshed.ok) {
+              return { ok: false, error: refreshed.error, status: refreshed.status };
+            }
+          }
+          return { ok: true };
+        } catch (error) {
+          if (error.status === 409) {
+            setUser(null);
+            await refreshSession();
+          }
+          return { ok: false, error: error.message, status: error.status };
         }
       },
     };
-  }, [user, googleReady, googleLoadError]);
+  }, [user, googleReady, googleLoadError, refreshSession]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

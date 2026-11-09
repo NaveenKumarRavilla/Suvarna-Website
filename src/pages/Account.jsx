@@ -43,19 +43,25 @@ const getSavedAddresses = (user) => {
   return [];
 };
 
-const invoiceAmount = (amount) => `INR ${Number(amount || 0).toLocaleString('en-IN')}`;
+const createAddressId = () =>
+  `address-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+
+const invoiceAmount = (amountPaise) => `INR ${(amountPaise / 100).toLocaleString('en-IN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})}`;
+const toPaise = (amount) => {
+  const value = Number(amount);
+  return Number.isFinite(value) ? Math.round(value * 100) : 0;
+};
 
 async function downloadInvoice(order, settings) {
   const { jsPDF } = await import('jspdf');
   const pdf = new jsPDF();
   const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
   const margin = 16;
   const right = pageWidth - margin;
-  const formatBlock = (value, x, y, width, lineHeight = 5) => {
-    const lines = pdf.splitTextToSize(String(value || '-'), width);
-    pdf.text(lines, x, y);
-    return y + lines.length * lineHeight;
-  };
   const drawTableHeader = (y) => {
     pdf.setFillColor(241, 245, 249);
     pdf.rect(margin, y - 5, pageWidth - margin * 2, 10, 'F');
@@ -69,18 +75,25 @@ async function downloadInvoice(order, settings) {
     pdf.setFont('helvetica', 'normal');
     return y + 12;
   };
+  const seller = order.sellerSnapshot || {};
+  const sellerName = seller.storeName || seller.businessName || settings.storeName || 'Suvarna IT Enterprises';
+  const sellerEmail = seller.email || settings.email || '';
+  const sellerPhone = seller.phone || settings.phone || '';
+  const sellerAddress = seller.address || settings.address || '';
+  const sellerAddressLines = sellerAddress ? pdf.splitTextToSize(sellerAddress, 105) : [];
+  const headerBottom = Math.max(44, sellerAddressLines.length ? 34 + sellerAddressLines.length * 3.5 + 4 : 44);
 
   pdf.setFillColor(15, 35, 63);
-  pdf.rect(0, 0, pageWidth, 44, 'F');
+  pdf.rect(0, 0, pageWidth, headerBottom, 'F');
   pdf.setTextColor(255, 255, 255);
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(16);
-  pdf.text(settings.storeName || 'Suvarna IT Enterprises', margin, 16);
+  pdf.text(sellerName, margin, 16);
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8);
-  pdf.text(settings.email || '', margin, 23);
-  pdf.text(settings.phone || '', margin, 28);
-  pdf.text(pdf.splitTextToSize(settings.address || '', 105), margin, 34);
+  pdf.text(sellerEmail, margin, 23);
+  pdf.text(sellerPhone, margin, 28);
+  if (sellerAddressLines.length) pdf.text(sellerAddressLines, margin, 34);
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(21);
   pdf.text('INVOICE', right, 18, { align: 'right' });
@@ -90,19 +103,52 @@ async function downloadInvoice(order, settings) {
   pdf.text(`Order date: ${order.date || 'Not recorded'}`, right, 32, { align: 'right' });
   pdf.text('Status: Delivered', right, 38, { align: 'right' });
 
-  let y = 57;
+  const billToLines = pdf.splitTextToSize(
+    [order.customer, order.email, order.phone].filter(Boolean).join('\n') || '-',
+    82
+  );
+  const shipping = order.shippingAddress || {};
+  const deliveredToLines = pdf.splitTextToSize(
+    [shipping.address, shipping.city, shipping.pin].filter(Boolean).join(', ') || '-',
+    right - 112
+  );
+  let sectionY = headerBottom + 10;
+  let billedOffset = 0;
+  let deliveredOffset = 0;
+  let y = sectionY;
   pdf.setTextColor(15, 35, 63);
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(9);
-  pdf.text('BILLED TO', margin, y);
-  pdf.text('DELIVERED TO', 112, y);
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(9);
-  y = formatBlock([order.customer, order.email, order.phone].filter(Boolean).join('\n'), margin, y + 7, 82);
-  const shipping = order.shippingAddress || {};
-  formatBlock([shipping.address, shipping.city, shipping.pin].filter(Boolean).join(', '), 112, 64, right - 112);
-
-  y = Math.max(y, 82) + 10;
+  while (billedOffset < billToLines.length || deliveredOffset < deliveredToLines.length) {
+    if (sectionY + 15 > pageHeight - margin) {
+      pdf.addPage();
+      sectionY = 20;
+    }
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(9);
+    pdf.text(billedOffset ? 'BILLED TO (CONT.)' : 'BILLED TO', margin, sectionY);
+    pdf.text(deliveredOffset ? 'DELIVERED TO (CONT.)' : 'DELIVERED TO', 112, sectionY);
+    const textY = sectionY + 7;
+    const linesPerPage = Math.max(1, Math.floor((pageHeight - margin - textY - 8) / 5));
+    const billedChunk = billToLines.slice(billedOffset, billedOffset + linesPerPage);
+    const deliveredChunk = deliveredToLines.slice(deliveredOffset, deliveredOffset + linesPerPage);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    if (billedChunk.length) pdf.text(billedChunk, margin, textY);
+    if (deliveredChunk.length) pdf.text(deliveredChunk, 112, textY);
+    const blockLines = Math.max(billedChunk.length, deliveredChunk.length);
+    billedOffset += billedChunk.length;
+    deliveredOffset += deliveredChunk.length;
+    y = textY + blockLines * 5 + 10;
+    if (billedOffset < billToLines.length || deliveredOffset < deliveredToLines.length) {
+      pdf.addPage();
+      sectionY = 20;
+    }
+  }
+  if (y + 22 > pageHeight - margin) {
+    pdf.addPage();
+    y = 20;
+  }
   pdf.setDrawColor(226, 232, 240);
   pdf.line(margin, y - 6, right, y - 6);
   y = drawTableHeader(y);
@@ -112,27 +158,30 @@ async function downloadInvoice(order, settings) {
   for (const item of order.items || []) {
     const nameLines = pdf.splitTextToSize(item.name || 'Product', 78);
     const rowHeight = Math.max(12, nameLines.length * 5 + 3);
-    if (y + rowHeight > 265) {
+    if (y + rowHeight > pageHeight - margin) {
       pdf.addPage();
       y = drawTableHeader(20);
       pdf.setFontSize(9);
       pdf.setTextColor(30, 41, 59);
     }
+    const quantity = Math.max(1, Math.trunc(Number(item.qty) || 1));
+    const unitPricePaise = toPaise(item.price);
     pdf.text(nameLines, margin + 2, y);
-    pdf.text(String(item.qty || 1), 116, y, { align: 'center' });
-    pdf.text(invoiceAmount(item.price), 151, y, { align: 'right' });
-    pdf.text(invoiceAmount((item.price || 0) * (item.qty || 1)), right - 2, y, { align: 'right' });
+    pdf.text(String(quantity), 116, y, { align: 'center' });
+    pdf.text(invoiceAmount(unitPricePaise), 151, y, { align: 'right' });
+    pdf.text(invoiceAmount(unitPricePaise * quantity), right - 2, y, { align: 'right' });
     y += rowHeight;
     pdf.setDrawColor(226, 232, 240);
     pdf.line(margin, y - 2, right, y - 2);
   }
 
-  const itemSubtotal = (order.items || []).reduce(
-    (sum, item) => sum + (Number(item.price) || 0) * (Number(item.qty) || 1),
-    0
+  const itemSubtotalPaise = (order.items || []).reduce(
+    (sum, item) => sum + toPaise(item.price) * Math.max(1, Math.trunc(Number(item.qty) || 1)),
+    0,
   );
-  const deliveryFee = Math.max(0, (Number(order.total) || 0) - itemSubtotal);
-  if (y + 28 > 275) {
+  const totalPaise = toPaise(order.total);
+  const deliveryFeePaise = Math.max(0, totalPaise - itemSubtotalPaise);
+  if (y + 28 > pageHeight - margin) {
     pdf.addPage();
     y = 24;
   }
@@ -142,17 +191,17 @@ async function downloadInvoice(order, settings) {
   pdf.text('Payment method', margin, y);
   pdf.text(order.payment === 'cod' ? 'Cash on Delivery' : order.payment || 'Not recorded', margin + 38, y);
   pdf.text('Item subtotal', 151, y, { align: 'right' });
-  pdf.text(invoiceAmount(itemSubtotal), right - 2, y, { align: 'right' });
+  pdf.text(invoiceAmount(itemSubtotalPaise), right - 2, y, { align: 'right' });
   pdf.text('Delivery fee', 151, y + 6, { align: 'right' });
-  pdf.text(deliveryFee ? invoiceAmount(deliveryFee) : 'FREE', right - 2, y + 6, { align: 'right' });
+  pdf.text(deliveryFeePaise ? invoiceAmount(deliveryFeePaise) : 'FREE', right - 2, y + 6, { align: 'right' });
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(12);
   pdf.text('TOTAL', 151, y + 16, { align: 'right' });
-  pdf.text(invoiceAmount(order.total), right - 2, y + 16, { align: 'right' });
+  pdf.text(invoiceAmount(totalPaise), right - 2, y + 16, { align: 'right' });
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8);
   pdf.setTextColor(100, 116, 139);
-  pdf.text('Thank you for shopping with us.', margin, 284);
+  pdf.text('Thank you for shopping with us.', margin, pageHeight - 10);
 
   const safeOrderId = String(order.id).replace(/[^a-zA-Z0-9_-]/g, '-');
   const blobUrl = URL.createObjectURL(pdf.output('blob'));
@@ -166,7 +215,7 @@ async function downloadInvoice(order, settings) {
 }
 
 export default function Account() {
-  const { user, isLoggedIn, logout, updateProfile } = useAuth();
+  const { user, isLoggedIn, logout, updateProfile, refreshSession, upsertAddress, deleteAddress } = useAuth();
   const { settings, storefrontProducts } = useAdmin();
   const { items: wishlistItems, removeItem, clearWishlist } = useWishlist();
   const { addItem } = useCart();
@@ -193,12 +242,18 @@ export default function Account() {
     let active = true;
     const refreshOrders = async () => {
       try {
-        const result = await apiRequest('customer-orders');
+        const result = await apiRequest('customer-orders', {
+          query: { expectedEmail: String(user.email || '').trim().toLowerCase() },
+        });
         if (active) {
           setMyOrders(result.orders);
           setOrdersError('');
         }
       } catch (error) {
+        if (active && error.status === 409) {
+          setMyOrders([]);
+          await refreshSession();
+        }
         if (active) setOrdersError(error.message);
       }
     };
@@ -213,7 +268,7 @@ export default function Account() {
       window.clearInterval(intervalId);
       document.removeEventListener('visibilitychange', refreshOnFocus);
     };
-  }, [isLoggedIn, user?.email]);
+  }, [isLoggedIn, user?.email, refreshSession]);
 
   if (!isLoggedIn) return <Navigate to="/login" replace />;
 
@@ -221,6 +276,7 @@ export default function Account() {
     e.preventDefault();
     const form = e.currentTarget;
     const result = await updateProfile({ name: form.name.value, phone: form.phone.value });
+    if (result.status === 409) setMyOrders([]);
     setProfileError(result.ok ? '' : result.error);
     setSaved(result.ok);
     if (result.ok) setTimeout(() => setSaved(false), 2500);
@@ -228,23 +284,28 @@ export default function Account() {
 
   const handleAddressSave = async (e) => {
     e.preventDefault();
+    const currentAddress = savedAddresses.find((item) => String(item.id) === String(addressEditor));
+    const isCreating = addressEditor === 'new' ||
+      currentAddress?.version == null ||
+      !Number.isInteger(Number(currentAddress.version));
     const cleanAddress = {
-      id: addressEditor === 'new' ? `address-${Date.now()}` : addressEditor,
+      id: isCreating
+        ? (addressDraft.id || createAddressId())
+        : currentAddress.id,
       label: addressDraft.label.trim() || `Address ${savedAddresses.length + (addressEditor === 'new' ? 1 : 0)}`,
       address: addressDraft.address.trim(),
       city: addressDraft.city.trim(),
       pin: addressDraft.pin.trim(),
     };
-    const nextAddresses = addressEditor === 'new'
-      ? [...savedAddresses, cleanAddress]
-      : savedAddresses.map((item) => item.id === addressEditor ? cleanAddress : item);
-    const result = await updateProfile({
-      addresses: nextAddresses,
-      address: nextAddresses[0]?.address || '',
-      city: nextAddresses[0]?.city || '',
-      pin: nextAddresses[0]?.pin || '',
-    });
+    const result = await upsertAddress(
+      cleanAddress,
+      isCreating ? 0 : Number(currentAddress.version)
+    );
     if (!result.ok) {
+      if (result.status === 409) {
+        setMyOrders([]);
+        setAddressEditor(null);
+      }
       setProfileError(result.error);
       return;
     }
@@ -255,24 +316,28 @@ export default function Account() {
   };
 
   const openNewAddress = () => {
-    setAddressDraft({ label: '', address: '', city: '', pin: '' });
+    setAddressDraft({ id: createAddressId(), label: '', address: '', city: '', pin: '' });
     setAddressEditor('new');
   };
 
   const openEditAddress = (address) => {
-    setAddressDraft(address);
+    setAddressDraft({
+      ...address,
+      id: address.version != null && Number.isInteger(Number(address.version))
+        ? address.id
+        : createAddressId(),
+    });
     setAddressEditor(address.id);
   };
 
   const removeAddress = async (id) => {
-    const nextAddresses = savedAddresses.filter((address) => address.id !== id);
-    const result = await updateProfile({
-      addresses: nextAddresses,
-      address: nextAddresses[0]?.address || '',
-      city: nextAddresses[0]?.city || '',
-      pin: nextAddresses[0]?.pin || '',
-    });
+    const address = savedAddresses.find((item) => String(item.id) === String(id));
+    const result = await deleteAddress(
+      id,
+      address?.version == null ? undefined : Number(address.version)
+    );
     if (!result.ok) {
+      if (result.status === 409) setMyOrders([]);
       setProfileError(result.error);
       return;
     }

@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
 import { useAdmin } from '../context/AdminContext';
+import { DELIVERY_FEE, FREE_DELIVERY_THRESHOLD } from '../hooks/useCart';
 
 export default function PolicyPage({ slug: fixedSlug }) {
   const { slug: routeSlug } = useParams();
@@ -42,7 +43,11 @@ export default function PolicyPage({ slug: fixedSlug }) {
           {policy.items.map(({ heading, text }) => (
             <section key={heading} className="rounded-xl border border-slate-200 bg-slate-50 p-5">
               <h2 className="text-base font-bold text-primary">{heading}</h2>
-              <p className="mt-2 text-sm leading-relaxed text-slate-600">{text}</p>
+              <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                {policySlug === 'shipping' && heading.toLowerCase() === 'shipping charges'
+                  ? `Standard delivery is ${DELIVERY_FEE.toLocaleString('en-IN')} for orders below ₹${FREE_DELIVERY_THRESHOLD.toLocaleString('en-IN')}. Delivery is free for orders of ₹${FREE_DELIVERY_THRESHOLD.toLocaleString('en-IN')} or more. The checkout total displays the applicable charge before you place your order.`
+                  : text}
+              </p>
             </section>
           ))}
         </div>

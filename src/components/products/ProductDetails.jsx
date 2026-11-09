@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Heart,
@@ -30,7 +30,7 @@ import {
   handleImgError,
   productEnquiryLink,
 } from '../../utils/helpers';
-import { FREE_DELIVERY_THRESHOLD } from '../../hooks/useCart';
+import { DELIVERY_FEE, FREE_DELIVERY_THRESHOLD } from '../../hooks/useCart';
 
 const TABS = ['Description', 'Specifications', 'Shipping', 'Warranty', 'Reviews'];
 
@@ -56,6 +56,8 @@ export default function ProductDetails({ product, related }) {
   const { user } = useAuth();
   const { toggleItem, isWishlisted } = useWishlist();
   const navigate = useNavigate();
+  const tabPrefix = useId();
+  const tabRefs = useRef({});
   const [activeImage, setActiveImage] = useState(0);
   const [qty, setQty] = useState(1);
   const [tab, setTab] = useState('Description');
@@ -123,8 +125,11 @@ export default function ProductDetails({ product, related }) {
       : [];
 
   const discount = calcDiscount(product.price, product.oldPrice);
-  const outOfStock = product.stock === 'Out of Stock' ||
-    (product.stockQuantity != null && Number(product.stockQuantity) <= 0);
+  const stockStatus = String(product.stock || '').trim().toLowerCase();
+  const outOfStock = stockStatus === 'out of stock' ||
+    (product.stockQuantity != null && Number(product.stockQuantity) <= 0) ||
+    (stockStatus === 'limited stock' &&
+      (!Number.isInteger(Number(product.stockQuantity)) || Number(product.stockQuantity) < 1));
   const highlights = [
     product.specs.processor,
     product.specs.ram,
@@ -133,8 +138,7 @@ export default function ProductDetails({ product, related }) {
   ];
 
   const handleBuyNow = () => {
-    addItem(product, qty);
-    navigate('/checkout');
+    if (addItem(product, qty)) navigate('/checkout');
   };
 
   const showPrevImage = () => {
@@ -144,6 +148,19 @@ export default function ProductDetails({ product, related }) {
   const showNextImage = () => {
     setActiveImage((current) => (current === galleryImages.length - 1 ? 0 : current + 1));
   };
+  const tabKeyDown = (event, currentIndex) => {
+    let nextIndex = currentIndex;
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % TABS.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + TABS.length) % TABS.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = TABS.length - 1;
+    else return;
+    event.preventDefault();
+    const nextTab = TABS[nextIndex];
+    setTab(nextTab);
+    tabRefs.current[nextTab]?.focus();
+  };
+  const tabDomId = (value) => `${tabPrefix}-${value.toLowerCase()}`;
 
   return (
     <div className="animate-fade-up">
@@ -249,6 +266,9 @@ export default function ProductDetails({ product, related }) {
           <h1 className="mt-3 text-2xl font-extrabold text-primary sm:text-3xl">
             {product.name}
           </h1>
+          {(product.sku || product.productCode) && (
+            <p className="mt-1 text-xs font-medium text-slate-500">SKU: {product.sku || product.productCode}</p>
+          )}
 
           <div className="mt-2 flex items-center gap-2 text-sm text-slate-500">
             {reviews.length > 0 ? (
@@ -386,14 +406,19 @@ export default function ProductDetails({ product, related }) {
 
       {/* Tabs */}
       <div className="mt-10 rounded-xl bg-white shadow-card">
-        <div className="no-scrollbar flex gap-1 overflow-x-auto border-b border-slate-100 px-3 pt-2">
-          {TABS.map((t) => (
+        <div role="tablist" aria-label="Product information" className="no-scrollbar flex gap-1 overflow-x-auto border-b border-slate-100 px-3 pt-2">
+          {TABS.map((t, tabIndex) => (
             <button
               key={t}
+              ref={(element) => { tabRefs.current[t] = element; }}
               type="button"
               onClick={() => setTab(t)}
+              onKeyDown={(event) => tabKeyDown(event, tabIndex)}
+              id={tabDomId(t)}
+              aria-controls={`${tabDomId(t)}-panel`}
               aria-selected={tab === t}
               role="tab"
+              tabIndex={tab === t ? 0 : -1}
               className={`whitespace-nowrap rounded-t-lg border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
                 tab === t
                   ? 'border-accent text-secondary'
@@ -404,7 +429,22 @@ export default function ProductDetails({ product, related }) {
             </button>
           ))}
         </div>
-        <div className="p-5 sm:p-6" role="tabpanel">
+        {TABS.filter((panelTab) => panelTab !== tab).map((panelTab) => (
+          <div
+            key={panelTab}
+            id={`${tabDomId(panelTab)}-panel`}
+            role="tabpanel"
+            aria-labelledby={tabDomId(panelTab)}
+            hidden
+          />
+        ))}
+        <div
+          id={`${tabDomId(tab)}-panel`}
+          className="p-5 sm:p-6"
+          role="tabpanel"
+          aria-labelledby={tabDomId(tab)}
+          tabIndex={0}
+        >
           {tab === 'Description' && (
             <p className="max-w-3xl text-sm leading-relaxed text-slate-600">
               {product.description}
@@ -424,7 +464,7 @@ export default function ProductDetails({ product, related }) {
             <ul className="max-w-3xl list-disc space-y-2 pl-5 text-sm text-slate-600">
               <li>Orders are dispatched within 24-48 business hours.</li>
               <li>
-                Free delivery on orders above {formatPrice(FREE_DELIVERY_THRESHOLD)} across India.
+                Delivery is {formatPrice(DELIVERY_FEE)} below {formatPrice(FREE_DELIVERY_THRESHOLD)}; orders at or above that amount ship free.
               </li>
               <li>Standard delivery: 3-7 business days depending on location.</li>
               <li>Secure packaging with transit insurance on all electronics.</li>

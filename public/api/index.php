@@ -120,18 +120,37 @@ try {
             requireMethod('GET');
             requireAdmin();
             $profile = currentAdminProfile();
+            verifyAdminNotificationAccount(
+                $_GET['expectedEmail'] ?? $_GET['expectedAdminEmail'] ?? null,
+                array_key_exists('expectedEmail', $_GET) || array_key_exists('expectedAdminEmail', $_GET)
+            );
             $types = [];
             if ($profile['master'] || in_array('orders', $profile['permissions'], true)) $types[] = 'order';
             if ($profile['master'] || in_array('enquiries', $profile['permissions'], true)) $types[] = 'enquiry';
             $notifications = [];
             $unreadCount = 0;
             $afterId = filter_var($_GET['after'] ?? 0, FILTER_VALIDATE_INT);
-            if ($afterId === false || $afterId < 0) respond(422, ['error' => 'Notification cursor is invalid.']);
+            $beforeId = filter_var($_GET['before'] ?? 0, FILTER_VALIDATE_INT);
+            if ($afterId === false || $afterId < 0 || $beforeId === false || $beforeId < 0 || ($afterId > 0 && $beforeId > 0)) {
+                respond(422, ['error' => 'Notification cursor is invalid.']);
+            }
             $nextCursor = (int) $afterId;
+            $beforeCursor = (int) $beforeId;
+            $hasOlder = false;
+            $hasMore = false;
             if ($types !== []) {
                 $placeholders = implode(', ', array_fill(0, count($types), '?'));
-                $orderDirection = $afterId > 0 ? 'ASC' : 'DESC';
-                $cursorCondition = $afterId > 0 ? ' AND n.id > ?' : '';
+                $cursorCondition = '';
+                $cursorParameters = [];
+                $orderDirection = 'DESC';
+                if ($afterId > 0) {
+                    $cursorCondition = ' AND n.id > ?';
+                    $cursorParameters[] = $afterId;
+                    $orderDirection = 'ASC';
+                } elseif ($beforeId > 0) {
+                    $cursorCondition = ' AND n.id < ?';
+                    $cursorParameters[] = $beforeId;
+                }
                 $statement = $pdo->prepare(
                     "SELECT n.id, n.type, n.title, n.summary, n.href, n.created_at,
                             (r.notification_id IS NOT NULL) AS is_read
@@ -140,11 +159,14 @@ try {
                        ON r.notification_id = n.id AND r.admin_email = ?
                      WHERE n.recipient_email IS NULL AND n.type IN ({$placeholders})
                      {$cursorCondition}
-                     ORDER BY n.id {$orderDirection} LIMIT 100"
+                     ORDER BY n.id {$orderDirection} LIMIT 101"
                 );
                 $parameters = array_merge([normalizeEmail($_SESSION['admin_email'])], $types);
-                if ($afterId > 0) $parameters[] = $afterId;
+                $parameters = array_merge($parameters, $cursorParameters);
                 $statement->execute($parameters);
+                $rows = $statement->fetchAll();
+                $hasMore = count($rows) > 100;
+                $rows = array_slice($rows, 0, 100);
                 $notifications = array_map(static function (array $notification): array {
                     return [
                         'id' => (int) $notification['id'],
@@ -155,9 +177,23 @@ try {
                         'createdAt' => $notification['created_at'],
                         'read' => (bool) $notification['is_read'],
                     ];
-                }, $statement->fetchAll());
+                }, $rows);
                 if ($notifications !== []) {
                     $nextCursor = max($nextCursor, max(array_column($notifications, 'id')));
+                    $beforeCursor = min(array_column($notifications, 'id'));
+                    $older = $pdo->prepare(
+                        "SELECT 1 FROM admin_notifications
+                         WHERE recipient_email IS NULL AND type IN ({$placeholders}) AND id < ? LIMIT 1"
+                    );
+                    $older->execute(array_merge($types, [$beforeCursor]));
+                    $hasOlder = (bool) $older->fetchColumn();
+                } elseif ($beforeId > 0) {
+                    $older = $pdo->prepare(
+                        "SELECT 1 FROM admin_notifications
+                         WHERE recipient_email IS NULL AND type IN ({$placeholders}) AND id < ? LIMIT 1"
+                    );
+                    $older->execute(array_merge($types, [$beforeId]));
+                    $hasOlder = (bool) $older->fetchColumn();
                 }
                 $count = $pdo->prepare(
                     "SELECT COUNT(*) FROM admin_notifications n
@@ -168,7 +204,14 @@ try {
                 $count->execute(array_merge([normalizeEmail($_SESSION['admin_email'])], $types));
                 $unreadCount = (int) $count->fetchColumn();
             }
-            respond(200, ['notifications' => $notifications, 'unreadCount' => $unreadCount, 'nextCursor' => $nextCursor]);
+            respond(200, [
+                'notifications' => $notifications,
+                'unreadCount' => $unreadCount,
+                'nextCursor' => $nextCursor,
+                'beforeCursor' => $beforeCursor,
+                'hasOlder' => $hasOlder,
+                'hasMore' => $hasMore,
+            ]);
 
         case 'admin-notifications-read':
             requireMethod('POST');
@@ -178,6 +221,10 @@ try {
             if ($profile['master'] || in_array('orders', $profile['permissions'], true)) $types[] = 'order';
             if ($profile['master'] || in_array('enquiries', $profile['permissions'], true)) $types[] = 'enquiry';
             $input = readJson();
+            verifyAdminNotificationAccount(
+                $input['expectedEmail'] ?? $input['expectedAdminEmail'] ?? null,
+                array_key_exists('expectedEmail', $input) || array_key_exists('expectedAdminEmail', $input)
+            );
             $ids = $input['ids'] ?? [];
             $markAll = ($input['all'] ?? false) === true;
             if (!is_array($ids) || count($ids) > 100 || (!$markAll && $ids === [])) {
@@ -207,13 +254,26 @@ try {
 
         case 'customer-notifications':
             requireMethod('GET');
-            requireCustomer();
-            $customerEmail = normalizeEmail($_SESSION['customer_email']);
-            if ($customerEmail === '') respond(401, ['error' => 'Customer login is required.']);
+            $customerEmail = verifyCustomerAccount(
+                $_GET['expectedEmail'] ?? null,
+                array_key_exists('expectedEmail', $_GET)
+            );
             $afterId = filter_var($_GET['after'] ?? 0, FILTER_VALIDATE_INT);
-            if ($afterId === false || $afterId < 0) respond(422, ['error' => 'Notification cursor is invalid.']);
-            $orderDirection = $afterId > 0 ? 'ASC' : 'DESC';
-            $cursorCondition = $afterId > 0 ? ' AND n.id > ?' : '';
+            $beforeId = filter_var($_GET['before'] ?? 0, FILTER_VALIDATE_INT);
+            if ($afterId === false || $afterId < 0 || $beforeId === false || $beforeId < 0 || ($afterId > 0 && $beforeId > 0)) {
+                respond(422, ['error' => 'Notification cursor is invalid.']);
+            }
+            $cursorCondition = '';
+            $cursorParameters = [];
+            $orderDirection = 'DESC';
+            if ($afterId > 0) {
+                $cursorCondition = ' AND n.id > ?';
+                $cursorParameters[] = $afterId;
+                $orderDirection = 'ASC';
+            } elseif ($beforeId > 0) {
+                $cursorCondition = ' AND n.id < ?';
+                $cursorParameters[] = $beforeId;
+            }
             $statement = $pdo->prepare(
                 "SELECT n.id, n.type, n.title, n.summary, n.href, n.created_at,
                         (r.notification_id IS NOT NULL) AS is_read
@@ -221,11 +281,13 @@ try {
                  LEFT JOIN customer_notification_reads r
                    ON r.notification_id = n.id AND r.customer_email = ?
                  WHERE n.recipient_email = ?{$cursorCondition}
-                 ORDER BY n.id {$orderDirection} LIMIT 100"
+                 ORDER BY n.id {$orderDirection} LIMIT 101"
             );
-            $parameters = [$customerEmail, $customerEmail];
-            if ($afterId > 0) $parameters[] = $afterId;
+            $parameters = [$customerEmail, $customerEmail, ...$cursorParameters];
             $statement->execute($parameters);
+            $rows = $statement->fetchAll();
+            $hasMore = count($rows) > 100;
+            $rows = array_slice($rows, 0, 100);
             $notifications = array_map(static function (array $notification): array {
                 return [
                     'id' => (int) $notification['id'],
@@ -236,9 +298,21 @@ try {
                     'createdAt' => $notification['created_at'],
                     'read' => (bool) $notification['is_read'],
                 ];
-            }, $statement->fetchAll());
+            }, $rows);
             $nextCursor = (int) $afterId;
             if ($notifications !== []) $nextCursor = max($nextCursor, max(array_column($notifications, 'id')));
+            $beforeCursor = $beforeId;
+            $hasOlder = false;
+            if ($notifications !== []) {
+                $beforeCursor = min(array_column($notifications, 'id'));
+                $older = $pdo->prepare('SELECT 1 FROM admin_notifications WHERE recipient_email = ? AND id < ? LIMIT 1');
+                $older->execute([$customerEmail, $beforeCursor]);
+                $hasOlder = (bool) $older->fetchColumn();
+            } elseif ($beforeId > 0) {
+                $older = $pdo->prepare('SELECT 1 FROM admin_notifications WHERE recipient_email = ? AND id < ? LIMIT 1');
+                $older->execute([$customerEmail, $beforeId]);
+                $hasOlder = (bool) $older->fetchColumn();
+            }
             $count = $pdo->prepare(
                 'SELECT COUNT(*) FROM admin_notifications n
                  LEFT JOIN customer_notification_reads r
@@ -250,14 +324,18 @@ try {
                 'notifications' => $notifications,
                 'unreadCount' => (int) $count->fetchColumn(),
                 'nextCursor' => $nextCursor,
+                'beforeCursor' => $beforeCursor,
+                'hasOlder' => $hasOlder,
+                'hasMore' => $hasMore,
             ]);
 
         case 'customer-notifications-read':
             requireMethod('POST');
-            requireCustomer();
-            $customerEmail = normalizeEmail($_SESSION['customer_email']);
-            if ($customerEmail === '') respond(401, ['error' => 'Customer login is required.']);
             $input = readJson();
+            $customerEmail = verifyCustomerAccount(
+                $input['expectedEmail'] ?? null,
+                array_key_exists('expectedEmail', $input)
+            );
             $ids = $input['ids'] ?? [];
             $markAll = ($input['all'] ?? false) === true;
             if (!is_array($ids) || count($ids) > 100 || (!$markAll && $ids === [])) {
@@ -540,6 +618,15 @@ try {
                 respond(401, ['error' => 'Google did not return a valid verified email.']);
             }
             $customer = getCustomerByEmail($pdo, $email);
+            if (($input['purpose'] ?? '') === 'password-recovery') {
+                if (!$customer) respond(404, ['error' => 'No customer account exists for the verified Google email.']);
+                $recoveryToken = mintCustomerPasswordRecoveryToken($pdo, $email);
+                respond(200, [
+                    'recoveryToken' => $recoveryToken,
+                    'email' => $email,
+                    'expiresIn' => 600,
+                ]);
+            }
             if (!$customer) {
                 $statement = $pdo->prepare(
                     'INSERT INTO customers (email, name, phone, phone_digits, password_hash, provider, providers, addresses, joined_at) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, CURRENT_DATE)'
@@ -566,17 +653,29 @@ try {
 
         case 'customer-set-password':
             requireMethod('POST');
-            requireCustomer();
             $input = readJson();
             if (!validPassword($input['password'] ?? null, 8)) {
                 respond(422, ['error' => 'Password must be at least 8 characters.']);
             }
+            $recoveryToken = cleanText($input['recoveryToken'] ?? '', 128);
+            $recoveryFlow = array_key_exists('recoveryToken', $input) || ($input['flow'] ?? '') === 'recovery';
+            if ($recoveryFlow) {
+                if (!preg_match('/^[a-f0-9]{64}$/D', $recoveryToken)) {
+                    respond(401, ['error' => 'Password recovery request is invalid or has expired. Verify your account again.']);
+                }
+                consumeCustomerPasswordRecoveryToken($pdo, $recoveryToken, $input['password']);
+                respond(200, ['ok' => true]);
+            }
+            $email = verifyCustomerAccount(
+                $input['expectedEmail'] ?? null,
+                array_key_exists('expectedEmail', $input)
+            );
             $statement = $pdo->prepare('SELECT providers FROM customers WHERE email = ?');
-            $statement->execute([$_SESSION['customer_email']]);
+            $statement->execute([$email]);
             $providers = json_decode($statement->fetchColumn() ?: '[]', true) ?: [];
             if (!in_array('email', $providers, true)) $providers[] = 'email';
             $statement = $pdo->prepare('UPDATE customers SET password_hash = ?, provider = ?, providers = ? WHERE email = ?');
-            $statement->execute([password_hash($input['password'], PASSWORD_DEFAULT), 'email', json_encode($providers), $_SESSION['customer_email']]);
+            $statement->execute([password_hash($input['password'], PASSWORD_DEFAULT), 'email', json_encode($providers), $email]);
             respond(200, ['ok' => true]);
 
         case 'customer-session':
@@ -588,9 +687,11 @@ try {
 
         case 'customer-orders':
             requireMethod('GET');
-            requireCustomer();
+            $email = verifyCustomerAccount(
+                $_GET['expectedEmail'] ?? null,
+                array_key_exists('expectedEmail', $_GET)
+            );
             $shared = getSharedStore($pdo);
-            $email = normalizeEmail($_SESSION['customer_email']);
             $orders = $shared ? array_values(array_filter(
                 $shared['data']['orders'] ?? [],
                 static fn ($order) => normalizeEmail($order['email'] ?? '') === $email
@@ -687,9 +788,12 @@ try {
 
         case 'customer-profile':
             requireMethod('POST');
-            requireCustomer();
             $input = readJson();
-            $existingCustomer = getCustomerByEmail($pdo, $_SESSION['customer_email']);
+            $email = verifyCustomerAccount(
+                $input['expectedEmail'] ?? null,
+                array_key_exists('expectedEmail', $input)
+            );
+            $existingCustomer = getCustomerByEmail($pdo, $email);
             if (!$existingCustomer) respond(404, ['error' => 'Customer account was not found.']);
             $name = cleanText($input['name'] ?? $existingCustomer['name'], 160);
             $phone = cleanText($input['phone'] ?? $existingCustomer['phone'], 40);
@@ -697,7 +801,7 @@ try {
             if ($phone !== '') {
                 $phoneDigits = preg_replace('/\D+/', '', $phone);
                 $statement = $pdo->prepare('SELECT id FROM customers WHERE phone_digits = ? AND email <> ? LIMIT 1');
-                $statement->execute([$phoneDigits, $_SESSION['customer_email']]);
+                $statement->execute([$phoneDigits, $email]);
                 if ($statement->fetch()) respond(409, ['error' => 'This mobile number is already linked to another account.']);
             }
             $statement = $pdo->prepare('UPDATE customers SET name = ?, phone = ?, phone_digits = ?, address = ?, city = ?, pin = ?, addresses = ? WHERE email = ?');
@@ -711,14 +815,17 @@ try {
                 json_encode(is_array($input['addresses'] ?? null)
                     ? $input['addresses']
                     : (json_decode($existingCustomer['addresses'] ?? '[]', true) ?: [])),
-                $_SESSION['customer_email'],
+                $email,
             ]);
-            respond(200, ['user' => publicCustomer(getCustomerByEmail($pdo, $_SESSION['customer_email']))]);
+            respond(200, ['user' => publicCustomer(getCustomerByEmail($pdo, $email))]);
 
         case 'customer-address-upsert':
             requireMethod('POST');
-            requireCustomer();
             $input = readJson();
+            $email = verifyCustomerAccount(
+                $input['expectedEmail'] ?? null,
+                array_key_exists('expectedEmail', $input)
+            );
             $address = $input['address'] ?? null;
             if (!is_array($address)) respond(422, ['error' => 'A valid address is required.']);
             $addressId = cleanText($address['id'] ?? '', 80);
@@ -729,27 +836,114 @@ try {
             if ($addressId === '' || $street === '' || $city === '' || !preg_match('/^\d{6}$/D', $pin)) {
                 respond(422, ['error' => 'Enter an address, city and valid six-digit PIN code.']);
             }
-            $email = normalizeEmail($_SESSION['customer_email']);
+            $expectedVersion = readExpectedAddressVersion($input);
             $pdo->beginTransaction();
             try {
-                $statement = $pdo->prepare('SELECT addresses FROM customers WHERE email = ? FOR UPDATE');
+                $statement = $pdo->prepare('SELECT address, city, pin, addresses FROM customers WHERE email = ? FOR UPDATE');
                 $statement->execute([$email]);
-                $storedAddresses = $statement->fetchColumn();
-                if ($storedAddresses === false) throw new ApiException(404, 'Customer account was not found.');
-                $addresses = json_decode((string) $storedAddresses, true);
+                $customerRow = $statement->fetch();
+                if (!$customerRow) throw new ApiException(404, 'Customer account was not found.');
+                $addresses = json_decode((string) ($customerRow['addresses'] ?? '[]'), true);
                 if (!is_array($addresses)) $addresses = [];
-                $updatedAddress = ['id' => $addressId, 'label' => $label, 'address' => $street, 'city' => $city, 'pin' => $pin];
+                $updatedAddress = null;
                 $found = false;
+                $isPrimaryAddress = false;
                 foreach ($addresses as $index => $savedAddress) {
                     if (is_array($savedAddress) && (string) ($savedAddress['id'] ?? '') === $addressId) {
+                        $currentVersion = addressVersion($savedAddress);
+                        if ($expectedVersion !== null && $expectedVersion !== $currentVersion) {
+                            throw new ApiException(409, 'This address changed in another session. Refresh and retry.');
+                        }
+                        $updatedAddress = [
+                            'id' => $addressId,
+                            'label' => $label,
+                            'address' => $street,
+                            'city' => $city,
+                            'pin' => $pin,
+                            'version' => $currentVersion + 1,
+                        ];
                         $addresses[$index] = $updatedAddress;
+                        $isPrimaryAddress = $index === array_key_first($addresses);
                         $found = true;
                         break;
                     }
                 }
-                if (!$found) $addresses[] = $updatedAddress;
+                if (!$found) {
+                    if ($expectedVersion !== null && $expectedVersion !== 0) {
+                        throw new ApiException(409, 'This address changed in another session. Refresh and retry.');
+                    }
+                    $updatedAddress = [
+                        'id' => $addressId,
+                        'label' => $label,
+                        'address' => $street,
+                        'city' => $city,
+                        'pin' => $pin,
+                        'version' => 1,
+                    ];
+                    $isPrimaryAddress = $addresses === [];
+                    $addresses[] = $updatedAddress;
+                }
+                $primaryAddress = $isPrimaryAddress ? $updatedAddress : $customerRow;
                 $statement = $pdo->prepare('UPDATE customers SET address = ?, city = ?, pin = ?, addresses = ? WHERE email = ?');
-                $statement->execute([$street, $city, $pin, json_encode(array_values($addresses)), $email]);
+                $statement->execute([
+                    cleanText($primaryAddress['address'] ?? '', 500),
+                    cleanText($primaryAddress['city'] ?? '', 120),
+                    cleanText($primaryAddress['pin'] ?? '', 20),
+                    json_encode(array_values($addresses)),
+                    $email,
+                ]);
+                $pdo->commit();
+            } catch (Throwable $error) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $error;
+            }
+            respond(200, ['user' => publicCustomer(getCustomerByEmail($pdo, $email))]);
+
+        case 'customer-address-delete':
+            requireMethod('POST');
+            $input = readJson();
+            $email = verifyCustomerAccount(
+                $input['expectedEmail'] ?? null,
+                array_key_exists('expectedEmail', $input)
+            );
+            $addressId = cleanText($input['id'] ?? '', 80);
+            if ($addressId === '') respond(422, ['error' => 'Address ID is required.']);
+            $expectedVersion = readExpectedAddressVersion($input);
+            $pdo->beginTransaction();
+            try {
+                $statement = $pdo->prepare('SELECT address, city, pin, addresses FROM customers WHERE email = ? FOR UPDATE');
+                $statement->execute([$email]);
+                $customerRow = $statement->fetch();
+                if (!$customerRow) throw new ApiException(404, 'Customer account was not found.');
+                $addresses = json_decode((string) ($customerRow['addresses'] ?? '[]'), true);
+                if (!is_array($addresses)) $addresses = [];
+                $remainingAddresses = [];
+                $found = false;
+                $deletedPrimary = false;
+                $firstAddressIndex = array_key_first($addresses);
+                foreach ($addresses as $index => $savedAddress) {
+                    if (is_array($savedAddress) && (string) ($savedAddress['id'] ?? '') === $addressId) {
+                        if ($expectedVersion !== null && $expectedVersion !== addressVersion($savedAddress)) {
+                            throw new ApiException(409, 'This address changed in another session. Refresh and retry.');
+                        }
+                        $found = true;
+                        $deletedPrimary = $index === $firstAddressIndex;
+                        continue;
+                    }
+                    $remainingAddresses[] = $savedAddress;
+                }
+                if (!$found) throw new ApiException(404, 'Saved address was not found.');
+                $primary = $deletedPrimary && is_array($remainingAddresses[0] ?? null)
+                    ? $remainingAddresses[0]
+                    : $customerRow;
+                $statement = $pdo->prepare('UPDATE customers SET address = ?, city = ?, pin = ?, addresses = ? WHERE email = ?');
+                $statement->execute([
+                    cleanText($primary['address'] ?? '', 500),
+                    cleanText($primary['city'] ?? '', 120),
+                    cleanText($primary['pin'] ?? '', 20),
+                    json_encode(array_values($remainingAddresses)),
+                    $email,
+                ]);
                 $pdo->commit();
             } catch (Throwable $error) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
@@ -1011,6 +1205,8 @@ try {
                             $data[$collection] = array_values($currentData[$collection]);
                         }
                     }
+                    synchronizeProductSalesHolds($currentData, $data);
+                    rejectProductsWithActiveReservations($currentData, $data);
 
                     $serialized = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                     if ($serialized === false || strlen($serialized) > MAX_SHARED_STORE_BYTES) {
@@ -1286,6 +1482,16 @@ function ensureSchema(PDO $pdo): void
             INDEX customer_notification_reads_customer (customer_email)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS customer_password_recovery_tokens (
+            token_hash CHAR(64) NOT NULL PRIMARY KEY,
+            email VARCHAR(254) NOT NULL,
+            expires_at DATETIME NOT NULL,
+            consumed_at DATETIME NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX customer_password_recovery_email_expiry (email, expires_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
 }
 
 function requireMethod(string $expected): void
@@ -1365,6 +1571,80 @@ function requireSharedStoreWritePermissions(array $currentData, array $newData):
     }
 }
 
+function synchronizeProductSalesHolds(array $currentData, array &$newData): void
+{
+    $currentById = [];
+    foreach (($currentData['products'] ?? []) as $product) {
+        if (is_array($product) && isset($product['id'])) $currentById[(string) $product['id']] = $product;
+    }
+
+    foreach ($newData['products'] as &$product) {
+        if (!is_array($product)) continue;
+        $id = (string) ($product['id'] ?? '');
+        $previous = $currentById[$id] ?? null;
+        $nextStatus = strtolower(cleanText($product['stock'] ?? '', 40));
+        $nextQuantity = explicitProductStockQuantity($product);
+        $hasRequestedHold = array_key_exists('manualSalesHold', $product);
+        $requestedHold = $hasRequestedHold && (
+            $product['manualSalesHold'] === true ||
+            $product['manualSalesHold'] === 1 ||
+            $product['manualSalesHold'] === '1'
+        );
+
+        if (!is_array($previous)) {
+            $product['manualSalesHold'] = $hasRequestedHold ? $requestedHold : productHasManualSalesHold($product);
+            continue;
+        }
+        $previousStatus = strtolower(cleanText($previous['stock'] ?? '', 40));
+        if ($previousStatus !== 'out of stock' && $nextStatus === 'out of stock' && $nextQuantity !== 0) {
+            $product['manualSalesHold'] = true;
+            continue;
+        }
+        if ($previousStatus === 'out of stock' && $nextStatus !== 'out of stock') {
+            $product['manualSalesHold'] = false;
+            continue;
+        }
+        if ($hasRequestedHold) {
+            $product['manualSalesHold'] = $requestedHold;
+            continue;
+        }
+        if (array_key_exists('manualSalesHold', $previous)) {
+            $product['manualSalesHold'] = productHasManualSalesHold($previous);
+            continue;
+        }
+
+        if ($nextQuantity === 0) {
+            $product['manualSalesHold'] = false;
+        } else {
+            $product['manualSalesHold'] = productHasManualSalesHold($previous);
+        }
+    }
+    unset($product);
+}
+
+function rejectProductsWithActiveReservations(array $currentData, array $newData): void
+{
+    $currentIds = [];
+    foreach (($currentData['products'] ?? []) as $product) {
+        if (is_array($product) && isset($product['id'])) $currentIds[(string) $product['id']] = true;
+    }
+    $newIds = [];
+    foreach (($newData['products'] ?? []) as $product) {
+        if (is_array($product) && isset($product['id'])) $newIds[(string) $product['id']] = true;
+    }
+    foreach (($currentData['orders'] ?? []) as $order) {
+        if (!is_array($order) || ($order['stockReservationState'] ?? '') !== 'reserved') continue;
+        if (in_array(strtolower(cleanText($order['status'] ?? '', 20)), ['cancelled', 'delivered'], true)) continue;
+        foreach (($order['stockReservations'] ?? []) as $reservation) {
+            if (!is_array($reservation)) continue;
+            $productId = (string) ($reservation['productId'] ?? '');
+            if ($productId !== '' && isset($currentIds[$productId]) && !isset($newIds[$productId])) {
+                throw new ApiException(409, 'A product cannot be deleted while an active order reserves its stock.');
+            }
+        }
+    }
+}
+
 function requireMasterAdmin(): void
 {
     global $config;
@@ -1413,6 +1693,27 @@ function requireCustomer(): void
     if (empty($_SESSION['customer_email'])) respond(401, ['error' => 'Customer login is required.']);
 }
 
+function verifyCustomerAccount(mixed $expectedEmail = null, bool $isProvided = false): string
+{
+    requireCustomer();
+    $sessionEmail = normalizeEmail($_SESSION['customer_email']);
+    if ($sessionEmail === '') respond(401, ['error' => 'Customer login is required.']);
+    if ($isProvided && !hash_equals($sessionEmail, normalizeEmail($expectedEmail))) {
+        respond(409, ['error' => 'The active customer account changed. Refresh your account and try again.']);
+    }
+    return $sessionEmail;
+}
+
+function verifyAdminNotificationAccount(mixed $expectedEmail = null, bool $isProvided = false): string
+{
+    $sessionEmail = normalizeEmail($_SESSION['admin_email'] ?? '');
+    if ($sessionEmail === '') respond(401, ['error' => 'Admin login is required.']);
+    if ($isProvided && !hash_equals($sessionEmail, normalizeEmail($expectedEmail))) {
+        respond(409, ['error' => 'The active admin account changed. Refresh and try again.']);
+    }
+    return $sessionEmail;
+}
+
 function normalizeEmail(mixed $email): string
 {
     if (!is_scalar($email)) return '';
@@ -1422,6 +1723,77 @@ function normalizeEmail(mixed $email): string
 function validPassword(mixed $password, int $minimum = 8): bool
 {
     return is_string($password) && strlen($password) >= $minimum && strlen($password) <= 1024;
+}
+
+function mintCustomerPasswordRecoveryToken(PDO $pdo, string $email): string
+{
+    $token = bin2hex(random_bytes(32));
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare('DELETE FROM customer_password_recovery_tokens WHERE expires_at <= CURRENT_TIMESTAMP')->execute();
+        $statement = $pdo->prepare(
+            'INSERT INTO customer_password_recovery_tokens (token_hash, email, expires_at) VALUES (?, ?, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 10 MINUTE))'
+        );
+        $statement->execute([hash('sha256', $token), $email]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $error;
+    }
+    return $token;
+}
+
+function consumeCustomerPasswordRecoveryToken(PDO $pdo, string $token, string $password): void
+{
+    $pdo->beginTransaction();
+    try {
+        $statement = $pdo->prepare(
+            'SELECT email, consumed_at, (expires_at > CURRENT_TIMESTAMP) AS is_valid
+             FROM customer_password_recovery_tokens WHERE token_hash = ? FOR UPDATE'
+        );
+        $statement->execute([hash('sha256', $token)]);
+        $recovery = $statement->fetch();
+        if (!$recovery || $recovery['consumed_at'] !== null || !(bool) $recovery['is_valid']) {
+            throw new ApiException(401, 'Password recovery request is invalid or has expired. Verify your account again.');
+        }
+
+        $email = normalizeEmail($recovery['email']);
+        $account = $pdo->prepare('SELECT providers FROM customers WHERE email = ? FOR UPDATE');
+        $account->execute([$email]);
+        $providersJson = $account->fetchColumn();
+        if ($providersJson === false) throw new ApiException(401, 'Password recovery request is invalid or has expired. Verify your account again.');
+
+        $providers = json_decode((string) $providersJson, true) ?: [];
+        if (!in_array('email', $providers, true)) $providers[] = 'email';
+        $statement = $pdo->prepare('UPDATE customers SET password_hash = ?, provider = ?, providers = ? WHERE email = ?');
+        $statement->execute([password_hash($password, PASSWORD_DEFAULT), 'email', json_encode($providers), $email]);
+        $statement = $pdo->prepare(
+            'UPDATE customer_password_recovery_tokens SET consumed_at = CURRENT_TIMESTAMP
+             WHERE token_hash = ? AND consumed_at IS NULL'
+        );
+        $statement->execute([hash('sha256', $token)]);
+        if ($statement->rowCount() !== 1) {
+            throw new ApiException(401, 'Password recovery request is invalid or has expired. Verify your account again.');
+        }
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $error;
+    }
+}
+
+function readExpectedAddressVersion(array $input): ?int
+{
+    if (!array_key_exists('expectedVersion', $input)) return null;
+    $version = filter_var($input['expectedVersion'], FILTER_VALIDATE_INT);
+    if ($version === false || $version < 0) respond(422, ['error' => 'The expected address version is invalid.']);
+    return $version;
+}
+
+function addressVersion(array $address): int
+{
+    $version = filter_var($address['version'] ?? 1, FILTER_VALIDATE_INT);
+    return $version === false || $version < 1 ? 1 : $version;
 }
 
 function cleanText(mixed $value, int $maximum): string
@@ -1451,6 +1823,12 @@ function getSharedStore(PDO $pdo): array|false
 
 function productSnapshotMatches(array $snapshot, array $product): bool
 {
+    $currentId = cleanText($product['id'] ?? '', 80);
+    foreach (['productId', 'id'] as $identifierField) {
+        $snapshotId = cleanText($snapshot[$identifierField] ?? '', 80);
+        if ($snapshotId !== '') return $currentId !== '' && hash_equals($currentId, $snapshotId);
+    }
+
     $savedName = strtolower(trim((string) ($snapshot['name'] ?? '')));
     $currentName = strtolower(trim((string) ($product['name'] ?? '')));
     if ($savedName === '' || $currentName === '' || $savedName !== $currentName) return false;
@@ -1478,11 +1856,7 @@ function hasDeliveredProductOrder(PDO $pdo, string $email, string $productId, ar
         if (!is_array($order) || normalizeEmail($order['email'] ?? '') !== $email) continue;
         if (strtolower((string) ($order['status'] ?? '')) !== 'delivered') continue;
         foreach (($order['items'] ?? []) as $item) {
-            if (
-                is_array($item) &&
-                (string) ($item['id'] ?? '') === $productId &&
-                productSnapshotMatches($item, $product)
-            ) {
+            if (is_array($item) && productSnapshotMatches($item, $product)) {
                 return true;
             }
         }
@@ -1580,6 +1954,32 @@ function explicitProductStockQuantity(array $product): ?int
     }
 
     throw new ApiException(409, '"' . cleanText($product['name'] ?? 'A product', 160) . '" has an invalid unit count. Ask the administrator to correct its stock quantity.');
+}
+
+function productHasManualSalesHold(array $product): bool
+{
+    if (array_key_exists('manualSalesHold', $product)) {
+        return $product['manualSalesHold'] === true || $product['manualSalesHold'] === 1 || $product['manualSalesHold'] === '1';
+    }
+    $quantity = explicitProductStockQuantity($product);
+    return strtolower(cleanText($product['stock'] ?? '', 40)) === 'out of stock' && ($quantity === null || $quantity > 0);
+}
+
+function effectiveProductStockStatus(array $product): string
+{
+    $quantity = explicitProductStockQuantity($product);
+    if (productHasManualSalesHold($product) || $quantity === 0) return 'Out of Stock';
+    $stock = cleanText($product['stock'] ?? '', 40);
+    if (
+        strtolower($stock) === 'out of stock' &&
+        $quantity !== null &&
+        $quantity > 0 &&
+        array_key_exists('manualSalesHold', $product) &&
+        !productHasManualSalesHold($product)
+    ) {
+        return 'In Stock';
+    }
+    return $stock;
 }
 
 function storeMediaFile(string $mime, string|false $contents): string
@@ -1758,7 +2158,7 @@ function createOrderIdempotently(PDO $pdo, array $input): array
                 throw new ApiException(409, 'A product in your cart is no longer available. Remove it and review your cart.');
             }
 
-            $stock = cleanText($product['stock'] ?? '', 40);
+            $stock = effectiveProductStockStatus($product);
             if (!in_array(strtolower($stock), ['in stock', 'limited stock'], true)) {
                 throw new ApiException(409, '"' . cleanText($product['name'] ?? 'A product', 160) . '" is out of stock. Remove it or contact us for availability.');
             }
@@ -1772,6 +2172,7 @@ function createOrderIdempotently(PDO $pdo, array $input): array
                 }
                 $remainingQuantity = $availableQuantity - $requestedItem['qty'];
                 $data['products'][$productIndex]['stockQuantity'] = $remainingQuantity;
+                $data['products'][$productIndex]['manualSalesHold'] = false;
                 if ($remainingQuantity === 0) {
                     $data['products'][$productIndex]['stock'] = 'Out of Stock';
                 }
@@ -1797,6 +2198,7 @@ function createOrderIdempotently(PDO $pdo, array $input): array
             $oldPrice = $product['oldPrice'] ?? $catalogPrice;
             $normalizedItems[] = [
                 'id' => $requestedItem['id'],
+                'productId' => $requestedItem['id'],
                 'name' => cleanText($product['name'] ?? 'Product', 200),
                 'qty' => $requestedItem['qty'],
                 'price' => round($pricePaise / 100, 2),
@@ -1823,6 +2225,7 @@ function createOrderIdempotently(PDO $pdo, array $input): array
             'total' => round($expectedTotalPaise / 100, 2),
             'payment' => 'cod',
             'shippingAddress' => $shippingAddress,
+            'sellerSnapshot' => sellerSnapshotFromSettings($data['settings'] ?? []),
             'date' => date('Y-m-d'),
             'status' => 'Pending',
             'idempotencyKey' => $idempotencyKey,
@@ -2049,8 +2452,8 @@ function updateSharedOrderStatus(PDO $pdo, string $orderId, string $status): arr
                     $updatedOrder = $order;
                     break;
                 }
-                if ($previousStatus === 'Delivered' && $status === 'Cancelled') {
-                    throw new ApiException(409, 'A delivered order cannot be cancelled or returned to stock through this status update.');
+                if ($previousStatus === 'Delivered' && $status !== 'Delivered') {
+                    throw new ApiException(409, 'A delivered order cannot be changed through this status update.');
                 }
                 $reservations = $order['stockReservations'] ?? [];
                 $reservationState = $order['stockReservationState'] ?? '';
@@ -2080,6 +2483,9 @@ function updateSharedOrderStatus(PDO $pdo, string $orderId, string $status): arr
                                     break;
                                 }
                             }
+                            if ($productIndex === null && $releaseStock) {
+                                continue;
+                            }
                             if ($productIndex === null) {
                                 throw new ApiException(409, 'Stock for this order can no longer be updated because a reserved product is missing.');
                             }
@@ -2091,21 +2497,34 @@ function updateSharedOrderStatus(PDO $pdo, string $orderId, string $status): arr
                                 if ($availableQuantity > PHP_INT_MAX - $reservation['quantity']) {
                                     throw new ApiException(409, 'Stock for this order cannot be restored safely. Ask the administrator to review the product quantity.');
                                 }
-                                $data['products'][$productIndex]['stockQuantity'] = $availableQuantity + $reservation['quantity'];
+                                $restoredQuantity = $availableQuantity + $reservation['quantity'];
+                                $product = $data['products'][$productIndex];
+                                $manualHold = productHasManualSalesHold($product);
                                 if (
+                                    !array_key_exists('manualSalesHold', $product) &&
                                     $reservation['exhaustedStock'] &&
+                                    strtolower(cleanText($product['stock'] ?? '', 40)) === 'out of stock'
+                                ) {
+                                    $manualHold = false;
+                                }
+                                $data['products'][$productIndex]['stockQuantity'] = $restoredQuantity;
+                                $data['products'][$productIndex]['manualSalesHold'] = $manualHold;
+                                if (
+                                    !$manualHold &&
+                                    $restoredQuantity > 0 &&
                                     strtolower(cleanText($data['products'][$productIndex]['stock'] ?? '', 40)) === 'out of stock'
                                 ) {
                                     $data['products'][$productIndex]['stock'] = $reservation['stockStatusBefore'];
                                 }
                             } else {
-                                $stockStatusBefore = cleanText($data['products'][$productIndex]['stock'] ?? '', 40);
+                                $stockStatusBefore = effectiveProductStockStatus($data['products'][$productIndex]);
                                 $stock = strtolower($stockStatusBefore);
                                 if (!in_array($stock, ['in stock', 'limited stock'], true) || $availableQuantity < $reservation['quantity']) {
                                     throw new ApiException(409, 'This order cannot be reopened because the reserved product no longer has enough available units.');
                                 }
                                 $remainingQuantity = $availableQuantity - $reservation['quantity'];
                                 $data['products'][$productIndex]['stockQuantity'] = $remainingQuantity;
+                                $data['products'][$productIndex]['manualSalesHold'] = false;
                                 if ($remainingQuantity === 0) {
                                     $data['products'][$productIndex]['stock'] = 'Out of Stock';
                                 }
@@ -2172,7 +2591,7 @@ function publicStoreData(array $data): array
     foreach (['products', 'categories', 'banners', 'promoCards', 'offers', 'videos', 'settings', 'policies'] as $key) {
         if (array_key_exists($key, $data)) {
             $public[$key] = $key === 'products'
-                ? array_values(array_filter($data[$key], 'isPublishableProduct'))
+                ? array_map('publicProduct', array_values(array_filter($data[$key], 'isPublishableProduct')))
                 : ($key === 'videos'
                     ? (is_array($data[$key]) ? array_values(array_filter(
                         $data[$key],
@@ -2185,6 +2604,32 @@ function publicStoreData(array $data): array
         }
     }
     return $public;
+}
+
+function publicProduct(mixed $product): mixed
+{
+    if (!is_array($product)) return $product;
+    $quantity = explicitProductStockQuantity($product);
+    $manualHold = productHasManualSalesHold($product);
+    $product['manualSalesHold'] = $manualHold;
+    if (!$manualHold && $quantity === 0) {
+        $product['stock'] = 'Out of Stock';
+    } elseif (!$manualHold && $quantity !== null && $quantity > 0 && strtolower(cleanText($product['stock'] ?? '', 40)) === 'out of stock') {
+        $product['stock'] = 'In Stock';
+    }
+    return $product;
+}
+
+function sellerSnapshotFromSettings(mixed $settings): array
+{
+    if (!is_array($settings)) $settings = [];
+    return [
+        'storeName' => cleanText($settings['storeName'] ?? 'Suvarna IT Enterprises', 160),
+        'email' => cleanText($settings['email'] ?? '', 254),
+        'phone' => cleanText($settings['phone'] ?? '', 40),
+        'whatsapp' => cleanText($settings['whatsapp'] ?? '', 40),
+        'address' => cleanText($settings['address'] ?? '', 500),
+    ];
 }
 
 function isPublishableProduct(mixed $product): bool

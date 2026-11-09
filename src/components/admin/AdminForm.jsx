@@ -1,3 +1,4 @@
+import { cloneElement, isValidElement, useId } from 'react';
 import { X } from 'lucide-react';
 
 export const inputCls =
@@ -6,10 +7,15 @@ export const inputCls =
 export const labelCls = 'mb-1.5 block text-xs font-semibold text-slate-600';
 
 export function Field({ label, children }) {
+  const generatedId = useId();
+  const controlId = isValidElement(children) ? children.props.id || generatedId : generatedId;
+  const control = isValidElement(children)
+    ? cloneElement(children, { id: controlId })
+    : children;
   return (
     <div>
-      <span className={labelCls}>{label}</span>
-      {children}
+      <label htmlFor={controlId} className={labelCls}>{label}</label>
+      {control}
     </div>
   );
 }
