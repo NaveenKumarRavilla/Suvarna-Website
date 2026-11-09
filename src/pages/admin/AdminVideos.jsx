@@ -10,6 +10,7 @@ import {
   StatusBadge,
   inputCls,
 } from '../../components/admin/AdminForm';
+import { extractYouTubeVideoId } from '../../utils/youtube';
 
 const emptyForm = { title: '', youtubeId: '', category: 'laptops' };
 const VIDEO_DRAFT_KEY = 'suvarna_admin_video_form_draft';
@@ -36,13 +37,13 @@ export default function AdminVideos() {
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const extractId = (value) => {
-    const match = value.match(/(?:youtu\.be\/|v=|embed\/)([\w-]{11})/);
-    return match ? match[1] : value.trim();
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const youtubeId = extractYouTubeVideoId(form.youtubeId);
+    if (!youtubeId) {
+      setSaveError('Enter an 11-character YouTube video ID, watch URL, youtu.be URL, or embed URL. Shorts links are not supported.');
+      return;
+    }
     setSaving(true);
     const id = pendingVideoId || createClientRecordId('VID');
     if (!pendingVideoId) {
@@ -50,13 +51,16 @@ export default function AdminVideos() {
       try { localStorage.setItem(VIDEO_DRAFT_KEY, JSON.stringify({ form, pendingId: id })); }
       catch (storageError) { console.error('Could not preserve video creation ID.', storageError); }
     }
-    const saved = await addVideo({ ...form, id, youtubeId: extractId(form.youtubeId), active: true });
-    setSaving(false);
-    if (!saved) { setSaveError('Video was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'); return; }
-    setSaveError('');
-    localStorage.removeItem(VIDEO_DRAFT_KEY);
-    setForm(emptyForm);
-    setModalOpen(false);
+    try {
+      const saved = await addVideo({ ...form, id, youtubeId, active: true });
+      if (!saved) { setSaveError('Video was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'); return; }
+      setSaveError('');
+      localStorage.removeItem(VIDEO_DRAFT_KEY);
+      setForm(emptyForm);
+      setModalOpen(false);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Filter, X } from 'lucide-react';
 import { useAdmin } from '../context/AdminContext';
@@ -7,8 +7,9 @@ import { calcDiscount } from '../utils/helpers';
 import ProductGrid from '../components/products/ProductGrid';
 import ProductFilter from '../components/products/ProductFilter';
 
-const MAX_FILTER_PRICE = 500000;
-const defaultFilters = { category: 'all', brands: [], maxPrice: MAX_FILTER_PRICE };
+const MIN_FILTER_PRICE = 5000;
+const PRICE_FILTER_STEP = 5000;
+const defaultFilters = (maxPrice) => ({ category: 'all', brands: [], maxPrice });
 
 const normalizeFilterValue = (value = '') => String(value || '').trim().toLowerCase();
 const hiddenCategories = ['home', 'contact', 'services', 'offers'];
@@ -19,11 +20,15 @@ export default function Products() {
   const search = (searchParams.get('search') || '').toLowerCase();
   const urlCategory = searchParams.get('category') || 'all';
   const offersOnly = searchParams.get('offers') === 'true';
+  const maxFilterPrice = Math.max(
+    500000,
+    Math.ceil(Math.max(0, ...products.map((product) => Number(product.price) || 0)) / PRICE_FILTER_STEP) * PRICE_FILTER_STEP
+  );
   const [filters, setFilters] = useState({
-    ...defaultFilters,
+    ...defaultFilters(maxFilterPrice),
     category: normalizeCategoryId(urlCategory),
-    maxPrice: MAX_FILTER_PRICE,
   });
+  const previousMaxFilterPrice = useRef(maxFilterPrice);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
   const availableCategories = useMemo(() => {
@@ -53,8 +58,15 @@ export default function Products() {
   );
 
   useEffect(() => {
-    setFilters((f) => ({ ...f, category: normalizeCategoryId(urlCategory), maxPrice: MAX_FILTER_PRICE }));
-  }, [urlCategory]);
+    setFilters((current) => ({
+      ...current,
+      category: normalizeCategoryId(urlCategory),
+      maxPrice: current.maxPrice >= previousMaxFilterPrice.current
+        ? maxFilterPrice
+        : current.maxPrice,
+    }));
+    previousMaxFilterPrice.current = maxFilterPrice;
+  }, [urlCategory, maxFilterPrice]);
 
   const filtered = useMemo(
     () =>
@@ -119,11 +131,11 @@ export default function Products() {
               filters={filters}
               categories={availableCategories}
               brands={availableBrands}
-              maxPrice={MAX_FILTER_PRICE}
+              maxPrice={maxFilterPrice}
               onChange={setFilters}
               onFilterApplied={handleFiltersApplied}
               onClear={() => {
-                setFilters(defaultFilters);
+                setFilters(defaultFilters(maxFilterPrice));
                 setMobileFiltersOpen(false);
               }}
             />
@@ -133,7 +145,7 @@ export default function Products() {
           <ProductGrid
             products={filtered}
             colsClass="xl:grid-cols-3 2xl:grid-cols-4"
-            onReset={() => setFilters(defaultFilters)}
+            onReset={() => setFilters(defaultFilters(maxFilterPrice))}
           />
         </main>
       </div>

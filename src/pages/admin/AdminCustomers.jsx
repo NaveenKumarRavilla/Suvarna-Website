@@ -1,63 +1,39 @@
-import { useEffect, useRef, useState } from 'react';
-import { Trash2, Mail, Phone, ShieldCheck, RefreshCw, Download, Upload, UserPlus, Pencil } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Trash2, Mail, Phone, ShieldCheck, RefreshCw, Download, UserPlus, Pencil } from 'lucide-react';
 import Button from '../../components/common/Button';
 import { Field, Modal, PageHeader, inputCls, tableWrap, tableCls, thCls, tdCls } from '../../components/admin/AdminForm';
 import { apiRequest } from '../../utils/api';
-import { downloadCsv, parseCsv } from '../../utils/csv';
+import { downloadCsv } from '../../utils/csv';
+import { useAdmin } from '../../context/AdminContext';
 
 const customerCsvHeaders = ['id', 'name', 'email', 'phone', 'address', 'city', 'pin', 'provider', 'providers', 'orders', 'joined'];
 const emptyCustomerForm = { name: '', email: '', phone: '', address: '', city: '', pin: '' };
 
-const parseCustomerCsv = (text) => {
-  const rows = parseCsv(text);
-  if (rows.length < 2) throw new Error('The CSV file must include a header row and at least one customer.');
-  const aliases = {
-    id: 'id', name: 'name', customername: 'name', email: 'email', customeremail: 'email',
-    phone: 'phone', mobile: 'phone', mobilenumber: 'phone', address: 'address', city: 'city',
-    pin: 'pin', postalcode: 'pin', pincode: 'pin', joined: 'joined', provider: 'provider',
-    providers: 'providers', orders: 'orders',
-  };
-  const headers = rows[0].map((header) => {
-    const normalized = header.trim().toLowerCase().replace(/[\s_-]+/g, '');
-    return aliases[normalized] || normalized;
-  });
-  if (new Set(headers).size !== headers.length) throw new Error('The CSV file contains duplicate column names.');
-  for (const required of ['name', 'email']) {
-    if (!headers.includes(required)) throw new Error(`The CSV file is missing the required ${required} column.`);
-  }
-  if (rows.length > 501) throw new Error('Import a maximum of 500 customers at a time.');
-
-  const seenEmails = new Set();
-  return rows.slice(1).map((cells, rowIndex) => {
-    const rowNumber = rowIndex + 2;
-    const record = Object.fromEntries(headers.map((header, index) => [header, cells[index] || '']));
-    const email = String(record.email || '').trim().toLowerCase();
-    const name = String(record.name || '').trim();
-    if (!name) throw new Error(`Row ${rowNumber}: name is required.`);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error(`Row ${rowNumber}: enter a valid email address.`);
-    if (seenEmails.has(email)) throw new Error(`Row ${rowNumber}: email "${email}" appears more than once in the CSV.`);
-    seenEmails.add(email);
-    return Object.fromEntries(
-      ['name', 'email', 'phone', 'address', 'city', 'pin', 'joined']
-        .filter((field) => headers.includes(field))
-        .map((field) => [field, field === 'name' ? name : field === 'email' ? email : String(record[field] || '').trim()]),
-    );
-  });
-};
-
 export default function AdminCustomers() {
+  const { refreshAdminProfile } = useAdmin();
   const [customers, setCustomers] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [importing, setImporting] = useState(false);
   const [savingCustomer, setSavingCustomer] = useState(false);
-  const [importStatus, setImportStatus] = useState('');
+  const [notice, setNotice] = useState('');
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [customerForm, setCustomerForm] = useState(emptyCustomerForm);
   const [phoneEditCustomer, setPhoneEditCustomer] = useState(null);
   const [phoneDraft, setPhoneDraft] = useState('');
   const [savingPhone, setSavingPhone] = useState(false);
-  const importInputRef = useRef(null);
+  const handleAccessError = async (requestError) => {
+    setError(requestError.message);
+    if (requestError.status !== 403) return;
+    setCustomers([]);
+    setCustomerModalOpen(false);
+    setPhoneEditCustomer(null);
+    setPhoneDraft('');
+    try {
+      await refreshAdminProfile();
+    } catch (profileError) {
+      console.error('Could not refresh admin permissions after customer access was revoked.', profileError);
+    }
+  };
 
   const loadCustomers = async () => {
     setLoading(true);
@@ -66,7 +42,7 @@ export default function AdminCustomers() {
       setCustomers(result.customers);
       setError('');
     } catch (requestError) {
-      setError(requestError.message);
+      await handleAccessError(requestError);
     } finally {
       setLoading(false);
     }
@@ -91,7 +67,7 @@ export default function AdminCustomers() {
       setCustomers((current) => current.filter((customer) => customer.id !== id));
       setError('');
     } catch (requestError) {
-      setError(requestError.message);
+      await handleAccessError(requestError);
     }
   };
 
@@ -106,43 +82,24 @@ export default function AdminCustomers() {
     );
   };
 
-  const importCustomers = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    setImporting(true);
-    setError('');
-    setImportStatus('');
-    try {
-      const imported = parseCustomerCsv(await file.text());
-      const result = await apiRequest('customers-import', { method: 'POST', body: { customers: imported } });
-      setImportStatus(`Imported ${result.created + result.updated} customer${result.created + result.updated === 1 ? '' : 's'}: ${result.created} added, ${result.updated} updated.`);
-      await loadCustomers();
-    } catch (requestError) {
-      setError(requestError.message || 'The selected CSV file could not be imported.');
-    } finally {
-      setImporting(false);
-    }
-  };
-
   const addCustomer = async (event) => {
     event.preventDefault();
     setSavingCustomer(true);
     setError('');
-    setImportStatus('');
+    setNotice('');
     try {
       const result = await apiRequest('customers-import', {
         method: 'POST',
         body: { customers: [customerForm], createOnly: true },
       });
-      setImportStatus(result.created
+      setNotice(result.created
         ? 'Customer profile added. The customer can sign in with Google using this email and set a password after verification.'
         : 'Customer profile updated.');
       setCustomerModalOpen(false);
       setCustomerForm(emptyCustomerForm);
       await loadCustomers();
     } catch (requestError) {
-      setError(requestError.message);
+      await handleAccessError(requestError);
     } finally {
       setSavingCustomer(false);
     }
@@ -153,7 +110,7 @@ export default function AdminCustomers() {
     if (!phoneEditCustomer) return;
     setSavingPhone(true);
     setError('');
-    setImportStatus('');
+    setNotice('');
     try {
       const result = await apiRequest('customers-update-phone', {
         method: 'POST',
@@ -167,7 +124,7 @@ export default function AdminCustomers() {
       setPhoneEditCustomer(null);
       setPhoneDraft('');
     } catch (requestError) {
-      setError(requestError.message);
+      await handleAccessError(requestError);
     } finally {
       setSavingPhone(false);
     }
@@ -183,18 +140,14 @@ export default function AdminCustomers() {
             <Button type="button" variant="primary" size="sm" onClick={() => { setCustomerForm(emptyCustomerForm); setError(''); setCustomerModalOpen(true); }}>
               <UserPlus size={14} />Add Customer
             </Button>
-            <Button type="button" variant="secondary" size="sm" onClick={() => importInputRef.current?.click()} disabled={importing || loading}>
-              <Upload size={14} />{importing ? 'Importing...' : 'Import CSV'}
-            </Button>
             <Button type="button" variant="secondary" size="sm" onClick={exportCustomers} disabled={loading || customers.length === 0}><Download size={14} />Export CSV</Button>
             <Button type="button" variant="secondary" size="sm" onClick={loadCustomers} disabled={loading}><RefreshCw size={14} />{loading ? 'Refreshing...' : 'Refresh'}</Button>
-            <input ref={importInputRef} type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" onChange={importCustomers} className="hidden" aria-label="Import customer profiles from CSV" />
           </>
         }
       />
-      <p className="mb-4 text-xs text-slate-500">Customer profile imports match by email and update contact details only. New profiles have no password; customers can verify with Google to set one. Passwords, login providers and orders are never imported or changed.</p>
+      <p className="mb-4 text-xs text-slate-500">Customer data can be exported for reporting. The CSV includes contact details, login provider and order count; passwords are never exported. New profiles can be added individually.</p>
       {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{error}</p>}
-      {importStatus && <p role="status" className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{importStatus}</p>}
+      {notice && <p role="status" className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{notice}</p>}
       {customers.length === 0 ? (
         <div className="rounded-xl bg-white p-10 text-center shadow-card">
           <p className="text-sm text-slate-500">{error ? 'Customer data could not be loaded.' : 'No customers yet. Users who register or sign in with Google will appear here.'}</p>

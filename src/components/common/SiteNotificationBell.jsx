@@ -3,71 +3,87 @@ import { useNavigate } from 'react-router-dom';
 import { Bell, CheckCheck, X } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 import { useAuth } from '../../context/AuthContext';
-import {
-  markAllSiteNotificationsRead,
-  markSiteNotificationRead,
-  readSiteNotifications,
-} from '../../utils/siteNotifications';
-
-const notificationEvent = 'suvarna:site-notifications';
-const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
+import { apiRequest } from '../../utils/api';
 
 const formatTime = (value) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 };
+const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 
 export default function SiteNotificationBell({ className = '' }) {
   const navigate = useNavigate();
-  const { isAdmin } = useAdmin();
+  const { isAdmin, currentUser } = useAdmin();
   const { user, isLoggedIn } = useAuth();
-  const [notifications, setNotifications] = useState(readSiteNotifications);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationsOwner, setNotificationsOwner] = useState('');
   const [open, setOpen] = useState(false);
   const [toast, setToast] = useState(null);
+  const [notificationError, setNotificationError] = useState('');
   const rootRef = useRef(null);
-  const email = normalizeEmail(user?.email);
-
-  const visibleNotifications = notifications.filter((notification) => (
-    isAdmin
-      ? notification.audience === 'admin'
-      : isLoggedIn && notification.audience === 'customer' && normalizeEmail(notification.recipientEmail) === email
-  ));
+  const owner = isAdmin
+    ? `admin:${normalizeEmail(currentUser)}`
+    : isLoggedIn ? `customer:${normalizeEmail(user?.email)}` : '';
+  const visibleNotifications = notificationsOwner === owner && owner ? notifications : [];
   const unreadCount = visibleNotifications.filter((notification) => !notification.read).length;
 
   useEffect(() => {
-    let knownIds = new Set(readSiteNotifications().map((notification) => notification.id));
-    let toastTimer;
+    if (isAdmin || isLoggedIn) {
+      setNotifications([]);
+      setNotificationsOwner('');
+      setNotificationError('');
+      let active = true;
+      let knownIds = null;
+      let toastTimer;
+      const listAction = isAdmin ? 'admin-notifications' : 'customer-notifications';
 
-    const refresh = () => {
-      const next = readSiteNotifications();
-      const incoming = next.find((notification) => (
-        !knownIds.has(notification.id)
-        && (isAdmin
-          ? notification.audience === 'admin'
-          : isLoggedIn && notification.audience === 'customer' && normalizeEmail(notification.recipientEmail) === email)
-      ));
-      knownIds = new Set(next.map((notification) => notification.id));
-      setNotifications(next);
+      const refresh = async () => {
+        try {
+          const result = await apiRequest(listAction);
+          if (!active) return;
+          const next = Array.isArray(result.notifications) ? result.notifications : [];
+          const incoming = knownIds && next.find((notification) => !knownIds.has(notification.id));
+          knownIds = new Set(next.map((notification) => notification.id));
+          setNotifications(next);
+          setNotificationsOwner(owner);
+          setNotificationError('');
+          if (incoming) {
+            setToast(incoming);
+            window.clearTimeout(toastTimer);
+            toastTimer = window.setTimeout(() => setToast(null), 6000);
+          }
+        } catch (error) {
+          if (!active) return;
+          if (error.status === 401 || error.status === 403) {
+            setNotifications([]);
+            setNotificationsOwner('');
+            setToast(null);
+          }
+          setNotificationError(error.message || 'Notifications could not be refreshed.');
+        }
+      };
+      const refreshWhenVisible = () => {
+        if (document.visibilityState === 'visible') refresh();
+      };
 
-      if (incoming) {
-        setToast(incoming);
+      refresh();
+      const intervalId = window.setInterval(refresh, 15_000);
+      document.addEventListener('visibilitychange', refreshWhenVisible);
+      return () => {
+        active = false;
+        window.clearInterval(intervalId);
+        document.removeEventListener('visibilitychange', refreshWhenVisible);
         window.clearTimeout(toastTimer);
-        toastTimer = window.setTimeout(() => setToast(null), 6000);
-      }
-    };
-    const onStorage = (event) => {
-      if (event.key === 'suvarna_site_notifications' || event.key === null) refresh();
-    };
+      };
+    }
 
-    window.addEventListener(notificationEvent, refresh);
-    window.addEventListener('storage', onStorage);
-    return () => {
-      window.removeEventListener(notificationEvent, refresh);
-      window.removeEventListener('storage', onStorage);
-      window.clearTimeout(toastTimer);
-    };
-  }, [email, isAdmin, isLoggedIn]);
+    setNotifications([]);
+    setNotificationsOwner('');
+    setNotificationError('');
+    setToast(null);
+    return undefined;
+  }, [isAdmin, isLoggedIn, owner]);
 
   useEffect(() => {
     const closeOnOutsideClick = (event) => {
@@ -85,11 +101,38 @@ export default function SiteNotificationBell({ className = '' }) {
     };
   }, []);
 
-  const openNotification = (notification) => {
-    markSiteNotificationRead(notification.id);
+  const openNotification = async (notification) => {
+    if (isAdmin || isLoggedIn) {
+      try {
+        await apiRequest(isAdmin ? 'admin-notifications-read' : 'customer-notifications-read', {
+          method: 'POST',
+          body: { ids: [notification.id] },
+        });
+        setNotifications((current) => current.map((item) => (
+          item.id === notification.id ? { ...item, read: true } : item
+        )));
+        setNotificationError('');
+      } catch (error) {
+        setNotificationError(error.message || 'The notification could not be marked as read.');
+        return;
+      }
+    }
     setOpen(false);
     setToast(null);
     if (notification.href) navigate(notification.href);
+  };
+
+  const markAllRead = async () => {
+    if (isAdmin || isLoggedIn) {
+      try {
+        await apiRequest(isAdmin ? 'admin-notifications-read' : 'customer-notifications-read', { method: 'POST', body: { all: true } });
+        setNotifications((current) => current.map((notification) => ({ ...notification, read: true })));
+        setNotificationError('');
+      } catch (error) {
+        setNotificationError(error.message || 'Notifications could not be marked as read.');
+      }
+      return;
+    }
   };
 
   const visibleToast = toast && visibleNotifications.some((notification) => notification.id === toast.id);
@@ -127,13 +170,14 @@ export default function SiteNotificationBell({ className = '' }) {
             {unreadCount > 0 && (
               <button
                 type="button"
-                onClick={() => markAllSiteNotificationsRead(visibleNotifications.map((notification) => notification.id))}
+                onClick={markAllRead}
                 className="inline-flex items-center gap-1 text-[11px] font-semibold text-secondary hover:text-primary"
               >
                 <CheckCheck size={14} /> Mark all read
               </button>
             )}
           </div>
+          {notificationError && <p role="alert" className="border-b border-red-100 bg-red-50 px-4 py-2 text-xs text-red-700">{notificationError}</p>}
           <div className="max-h-[min(60vh,420px)] overflow-y-auto">
             {visibleNotifications.length ? visibleNotifications.map((notification) => (
               <button

@@ -3,6 +3,8 @@ import PromoCards from '../components/home/PromoCards';
 import FeaturedProducts from '../components/home/FeaturedProducts';
 import ServiceFeatures from '../components/home/ServiceFeatures';
 import CategoryGrid from '../components/home/CategoryGrid';
+import ProductVideos from '../components/home/ProductVideos';
+import ActiveOffers from '../components/home/ActiveOffers';
 
 export default function Home() {
   return (
@@ -18,6 +20,8 @@ export default function Home() {
       <FeaturedProducts />
       <ServiceFeatures />
       <CategoryGrid />
+      <ActiveOffers />
+      <ProductVideos />
     </>
   );
 }

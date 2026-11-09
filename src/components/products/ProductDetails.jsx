@@ -123,7 +123,8 @@ export default function ProductDetails({ product, related }) {
       : [];
 
   const discount = calcDiscount(product.price, product.oldPrice);
-  const outOfStock = product.stock === 'Out of Stock';
+  const outOfStock = product.stock === 'Out of Stock' ||
+    (product.stockQuantity != null && Number(product.stockQuantity) <= 0);
   const highlights = [
     product.specs.processor,
     product.specs.ram,
@@ -299,7 +300,9 @@ export default function ProductDetails({ product, related }) {
                 }`}
                 aria-hidden="true"
               />
-              {product.stock}
+              {product.stock === 'Limited Stock' && Number.isInteger(Number(product.stockQuantity))
+                ? `${product.stock} · ${product.stockQuantity} available`
+                : product.stock}
             </p>
 
             <ul className="mt-4 space-y-1.5 border-t border-slate-100 pt-4">

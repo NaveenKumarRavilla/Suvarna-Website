@@ -26,6 +26,7 @@ import Button from '../components/common/Button';
 import OrderProductLink from '../components/common/OrderProductLink';
 import { StatusBadge, inputCls, labelCls } from '../components/admin/AdminForm';
 import { apiRequest } from '../utils/api';
+import { getAvailableWishlistProduct, normalizeWishlistProductId } from '../utils/wishlistProducts';
 
 const TABS = [
   { id: 'profile', label: 'Profile', icon: User },
@@ -166,7 +167,7 @@ async function downloadInvoice(order, settings) {
 
 export default function Account() {
   const { user, isLoggedIn, logout, updateProfile } = useAuth();
-  const { settings } = useAdmin();
+  const { settings, storefrontProducts } = useAdmin();
   const { items: wishlistItems, removeItem, clearWishlist } = useWishlist();
   const { addItem } = useCart();
   const [searchParams] = useSearchParams();
@@ -180,6 +181,9 @@ export default function Account() {
   const [ordersError, setOrdersError] = useState('');
 
   const savedAddresses = getSavedAddresses(user);
+  const currentProductsById = new Map(
+    storefrontProducts.map((product) => [normalizeWishlistProductId(product.id), product])
+  );
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -493,13 +497,15 @@ export default function Account() {
                 </div>
               ) : (
                 <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                  {wishlistItems.map((product) => (
+                  {wishlistItems.map((product) => {
+                    const currentProduct = getAvailableWishlistProduct(product, currentProductsById);
+                    return (
                     <article key={product.id} className="overflow-hidden rounded-xl border border-slate-100">
                       <div className="relative">
                         <Link to={`/product/${product.id}`}> 
                           <img
-                            src={product.images?.[0] || product.image || FALLBACK_IMAGE}
-                            alt={product.name}
+                            src={currentProduct?.images?.[0] || currentProduct?.image || product.images?.[0] || product.image || FALLBACK_IMAGE}
+                            alt={currentProduct?.name || product.name}
                             onError={handleImgError}
                             className="aspect-[4/3] w-full bg-white object-contain p-2"
                           />
@@ -514,14 +520,18 @@ export default function Account() {
                         </button>
                       </div>
                       <div className="p-4">
-                        <span className="text-[11px] font-bold uppercase tracking-wide text-secondary">{product.brand}</span>
-                        <h3 className="mt-1 line-clamp-2 text-sm font-bold text-primary">{product.name}</h3>
-                        <p className="mt-1 text-sm font-extrabold text-primary">{formatPrice(product.price)}</p>
+                        <span className="text-[11px] font-bold uppercase tracking-wide text-secondary">{currentProduct?.brand || product.brand}</span>
+                        <h3 className="mt-1 line-clamp-2 text-sm font-bold text-primary">{currentProduct?.name || product.name}</h3>
+                        <p className="mt-1 text-sm font-extrabold text-primary">{formatPrice(currentProduct?.price ?? product.price)}</p>
+                        {!currentProduct && <p className="mt-2 text-xs font-medium text-amber-700">This saved product is unavailable or has changed in the catalogue. Review it before adding.</p>}
                         <div className="mt-4 flex gap-2">
                           <button
                             type="button"
-                            onClick={() => addItem(product, 1)}
-                            className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-white transition hover:bg-secondary"
+                            onClick={() => {
+                              if (currentProduct) addItem(currentProduct, 1);
+                            }}
+                            disabled={!currentProduct}
+                            className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-white transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <ShoppingCart size={14} /> Add to Cart
                           </button>
@@ -536,7 +546,8 @@ export default function Account() {
                         </div>
                       </div>
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </section>

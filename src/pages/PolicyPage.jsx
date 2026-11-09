@@ -4,7 +4,8 @@ import { useAdmin } from '../context/AdminContext';
 export default function PolicyPage({ slug: fixedSlug }) {
   const { slug: routeSlug } = useParams();
   const { policies } = useAdmin();
-  const policy = policies[fixedSlug || routeSlug];
+  const policySlug = fixedSlug || routeSlug;
+  const policy = Object.hasOwn(policies, policySlug) ? policies[policySlug] : null;
 
   if (!policy) {
     return (

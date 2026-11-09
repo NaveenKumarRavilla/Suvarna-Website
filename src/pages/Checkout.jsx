@@ -14,7 +14,12 @@ const createOrderRequestKey = () =>
   `sie-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 
 const hashOrderFingerprint = async (fingerprint) => {
-  if (!globalThis.crypto?.subtle || !globalThis.TextEncoder) return null;
+  if (!globalThis.TextEncoder) return null;
+  if (!globalThis.crypto?.subtle) {
+    return [...new TextEncoder().encode(fingerprint)]
+      .reduce((hash, byte) => Math.imul(hash ^ byte, 16777619) >>> 0, 2166136261)
+      .toString(16);
+  }
   const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(fingerprint));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 };
@@ -22,11 +27,17 @@ const hashOrderFingerprint = async (fingerprint) => {
 const getOrderRequestKey = async (fingerprint) => {
   try {
     const fingerprintHash = await hashOrderFingerprint(fingerprint);
-    if (!fingerprintHash) return createOrderRequestKey();
-    const saved = JSON.parse(sessionStorage.getItem(PENDING_ORDER_REQUEST_KEY) || 'null');
-    if (saved?.fingerprintHash === fingerprintHash && typeof saved.key === 'string') return saved.key;
+    const saved = JSON.parse(sessionStorage.getItem(PENDING_ORDER_REQUEST_KEY) || '[]');
+    const requests = Array.isArray(saved)
+      ? saved
+      : saved?.fingerprintHash && saved?.key ? [saved] : [];
+    const existing = requests.find((request) => request.fingerprintHash === fingerprintHash);
+    if (existing?.key) return existing.key;
     const key = createOrderRequestKey();
-    sessionStorage.setItem(PENDING_ORDER_REQUEST_KEY, JSON.stringify({ fingerprintHash, key }));
+    sessionStorage.setItem(PENDING_ORDER_REQUEST_KEY, JSON.stringify([
+      ...requests.filter((request) => request.fingerprintHash !== fingerprintHash),
+      { fingerprintHash, key },
+    ].slice(-50)));
     return key;
   } catch {
     return createOrderRequestKey();
@@ -36,7 +47,10 @@ const getOrderRequestKey = async (fingerprint) => {
 const clearOrderRequestKey = (key) => {
   try {
     const saved = JSON.parse(sessionStorage.getItem(PENDING_ORDER_REQUEST_KEY) || 'null');
-    if (saved?.key === key) sessionStorage.removeItem(PENDING_ORDER_REQUEST_KEY);
+    const requests = Array.isArray(saved) ? saved : saved?.key ? [saved] : [];
+    const remaining = requests.filter((request) => request.key !== key);
+    if (remaining.length) sessionStorage.setItem(PENDING_ORDER_REQUEST_KEY, JSON.stringify(remaining));
+    else sessionStorage.removeItem(PENDING_ORDER_REQUEST_KEY);
   } catch {
     /* session storage unavailable */
   }

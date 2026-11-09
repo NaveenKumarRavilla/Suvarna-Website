@@ -87,19 +87,20 @@ try {
             if ($email !== normalizeEmail($config['master_admin_email'] ?? '') || !validPassword($password)) {
                 respond(422, ['error' => 'Use the configured master admin email and a password of at least 8 characters.']);
             }
-            $statement = $pdo->prepare('INSERT INTO admin_accounts (email, password_hash) VALUES (?, ?)');
+            $statement = $pdo->prepare('INSERT INTO admin_accounts (email, password_hash, session_version) VALUES (?, ?, 1)');
             $statement->execute([$email, password_hash($password, PASSWORD_DEFAULT)]);
             $profile = $pdo->prepare('INSERT INTO admin_profiles (email, name, role, permissions, status) VALUES (?, ?, ?, ?, ?)');
             $profile->execute([$email, 'Master Admin', 'Master Admin', json_encode(ADMIN_PERMISSION_IDS), 'Active']);
             session_regenerate_id(true);
             $_SESSION['admin_email'] = $email;
+            $_SESSION['admin_session_version'] = 1;
             respond(200, ['email' => $email, 'admin' => getAdminProfile($pdo, $email)]);
 
         case 'admin-login':
             requireMethod('POST');
             $input = readJson();
             $email = normalizeEmail($input['email'] ?? '');
-            $statement = $pdo->prepare('SELECT email, password_hash FROM admin_accounts WHERE email = ?');
+            $statement = $pdo->prepare('SELECT email, password_hash, session_version FROM admin_accounts WHERE email = ?');
             $statement->execute([$email]);
             $admin = $statement->fetch();
             if (!$admin || !password_verify((string) ($input['password'] ?? ''), $admin['password_hash'])) {
@@ -107,6 +108,7 @@ try {
             }
             session_regenerate_id(true);
             $_SESSION['admin_email'] = $admin['email'];
+            $_SESSION['admin_session_version'] = (int) $admin['session_version'];
             respond(200, ['email' => $admin['email'], 'admin' => getAdminProfile($pdo, $admin['email'])]);
 
         case 'admin-session':
@@ -114,9 +116,176 @@ try {
             requireAdmin();
             respond(200, ['email' => $_SESSION['admin_email'], 'admin' => getAdminProfile($pdo, $_SESSION['admin_email'])]);
 
+        case 'admin-notifications':
+            requireMethod('GET');
+            requireAdmin();
+            $profile = currentAdminProfile();
+            $types = [];
+            if ($profile['master'] || in_array('orders', $profile['permissions'], true)) $types[] = 'order';
+            if ($profile['master'] || in_array('enquiries', $profile['permissions'], true)) $types[] = 'enquiry';
+            $notifications = [];
+            $unreadCount = 0;
+            $afterId = filter_var($_GET['after'] ?? 0, FILTER_VALIDATE_INT);
+            if ($afterId === false || $afterId < 0) respond(422, ['error' => 'Notification cursor is invalid.']);
+            $nextCursor = (int) $afterId;
+            if ($types !== []) {
+                $placeholders = implode(', ', array_fill(0, count($types), '?'));
+                $orderDirection = $afterId > 0 ? 'ASC' : 'DESC';
+                $cursorCondition = $afterId > 0 ? ' AND n.id > ?' : '';
+                $statement = $pdo->prepare(
+                    "SELECT n.id, n.type, n.title, n.summary, n.href, n.created_at,
+                            (r.notification_id IS NOT NULL) AS is_read
+                     FROM admin_notifications n
+                     LEFT JOIN admin_notification_reads r
+                       ON r.notification_id = n.id AND r.admin_email = ?
+                     WHERE n.recipient_email IS NULL AND n.type IN ({$placeholders})
+                     {$cursorCondition}
+                     ORDER BY n.id {$orderDirection} LIMIT 100"
+                );
+                $parameters = array_merge([normalizeEmail($_SESSION['admin_email'])], $types);
+                if ($afterId > 0) $parameters[] = $afterId;
+                $statement->execute($parameters);
+                $notifications = array_map(static function (array $notification): array {
+                    return [
+                        'id' => (int) $notification['id'],
+                        'type' => $notification['type'],
+                        'title' => $notification['title'],
+                        'summary' => $notification['summary'],
+                        'href' => $notification['href'],
+                        'createdAt' => $notification['created_at'],
+                        'read' => (bool) $notification['is_read'],
+                    ];
+                }, $statement->fetchAll());
+                if ($notifications !== []) {
+                    $nextCursor = max($nextCursor, max(array_column($notifications, 'id')));
+                }
+                $count = $pdo->prepare(
+                    "SELECT COUNT(*) FROM admin_notifications n
+                     LEFT JOIN admin_notification_reads r
+                       ON r.notification_id = n.id AND r.admin_email = ?
+                    WHERE n.recipient_email IS NULL AND n.type IN ({$placeholders}) AND r.notification_id IS NULL"
+                );
+                $count->execute(array_merge([normalizeEmail($_SESSION['admin_email'])], $types));
+                $unreadCount = (int) $count->fetchColumn();
+            }
+            respond(200, ['notifications' => $notifications, 'unreadCount' => $unreadCount, 'nextCursor' => $nextCursor]);
+
+        case 'admin-notifications-read':
+            requireMethod('POST');
+            requireAdmin();
+            $profile = currentAdminProfile();
+            $types = [];
+            if ($profile['master'] || in_array('orders', $profile['permissions'], true)) $types[] = 'order';
+            if ($profile['master'] || in_array('enquiries', $profile['permissions'], true)) $types[] = 'enquiry';
+            $input = readJson();
+            $ids = $input['ids'] ?? [];
+            $markAll = ($input['all'] ?? false) === true;
+            if (!is_array($ids) || count($ids) > 100 || (!$markAll && $ids === [])) {
+                respond(422, ['error' => 'Select notifications to mark as read.']);
+            }
+            foreach ($ids as $id) {
+                if (!(is_int($id) || (is_string($id) && ctype_digit($id))) || (int) $id < 1) {
+                    respond(422, ['error' => 'Notification IDs are invalid.']);
+                }
+            }
+            $ids = array_values(array_unique(array_map('intval', $ids)));
+            if ($types === []) respond(200, ['marked' => 0]);
+
+            $typePlaceholders = implode(', ', array_fill(0, count($types), '?'));
+            $sql = 'INSERT IGNORE INTO admin_notification_reads (notification_id, admin_email, read_at)
+                    SELECT n.id, ?, CURRENT_TIMESTAMP FROM admin_notifications n
+                    WHERE n.recipient_email IS NULL AND n.type IN (' . $typePlaceholders . ')';
+            $parameters = [normalizeEmail($_SESSION['admin_email']), ...$types];
+            if (!$markAll) {
+                $idPlaceholders = implode(', ', array_fill(0, count($ids), '?'));
+                $sql .= ' AND n.id IN (' . $idPlaceholders . ')';
+                $parameters = array_merge($parameters, array_map('intval', $ids));
+            }
+            $statement = $pdo->prepare($sql);
+            $statement->execute($parameters);
+            respond(200, ['marked' => $statement->rowCount()]);
+
+        case 'customer-notifications':
+            requireMethod('GET');
+            requireCustomer();
+            $customerEmail = normalizeEmail($_SESSION['customer_email']);
+            if ($customerEmail === '') respond(401, ['error' => 'Customer login is required.']);
+            $afterId = filter_var($_GET['after'] ?? 0, FILTER_VALIDATE_INT);
+            if ($afterId === false || $afterId < 0) respond(422, ['error' => 'Notification cursor is invalid.']);
+            $orderDirection = $afterId > 0 ? 'ASC' : 'DESC';
+            $cursorCondition = $afterId > 0 ? ' AND n.id > ?' : '';
+            $statement = $pdo->prepare(
+                "SELECT n.id, n.type, n.title, n.summary, n.href, n.created_at,
+                        (r.notification_id IS NOT NULL) AS is_read
+                 FROM admin_notifications n
+                 LEFT JOIN customer_notification_reads r
+                   ON r.notification_id = n.id AND r.customer_email = ?
+                 WHERE n.recipient_email = ?{$cursorCondition}
+                 ORDER BY n.id {$orderDirection} LIMIT 100"
+            );
+            $parameters = [$customerEmail, $customerEmail];
+            if ($afterId > 0) $parameters[] = $afterId;
+            $statement->execute($parameters);
+            $notifications = array_map(static function (array $notification): array {
+                return [
+                    'id' => (int) $notification['id'],
+                    'type' => $notification['type'],
+                    'title' => $notification['title'],
+                    'summary' => $notification['summary'],
+                    'href' => $notification['href'],
+                    'createdAt' => $notification['created_at'],
+                    'read' => (bool) $notification['is_read'],
+                ];
+            }, $statement->fetchAll());
+            $nextCursor = (int) $afterId;
+            if ($notifications !== []) $nextCursor = max($nextCursor, max(array_column($notifications, 'id')));
+            $count = $pdo->prepare(
+                'SELECT COUNT(*) FROM admin_notifications n
+                 LEFT JOIN customer_notification_reads r
+                   ON r.notification_id = n.id AND r.customer_email = ?
+                 WHERE n.recipient_email = ? AND r.notification_id IS NULL'
+            );
+            $count->execute([$customerEmail, $customerEmail]);
+            respond(200, [
+                'notifications' => $notifications,
+                'unreadCount' => (int) $count->fetchColumn(),
+                'nextCursor' => $nextCursor,
+            ]);
+
+        case 'customer-notifications-read':
+            requireMethod('POST');
+            requireCustomer();
+            $customerEmail = normalizeEmail($_SESSION['customer_email']);
+            if ($customerEmail === '') respond(401, ['error' => 'Customer login is required.']);
+            $input = readJson();
+            $ids = $input['ids'] ?? [];
+            $markAll = ($input['all'] ?? false) === true;
+            if (!is_array($ids) || count($ids) > 100 || (!$markAll && $ids === [])) {
+                respond(422, ['error' => 'Select notifications to mark as read.']);
+            }
+            foreach ($ids as $id) {
+                if (!(is_int($id) || (is_string($id) && ctype_digit($id))) || (int) $id < 1) {
+                    respond(422, ['error' => 'Notification IDs are invalid.']);
+                }
+            }
+            $ids = array_values(array_unique(array_map('intval', $ids)));
+            $sql = 'INSERT IGNORE INTO customer_notification_reads (notification_id, customer_email, read_at)
+                    SELECT n.id, ?, CURRENT_TIMESTAMP FROM admin_notifications n
+                    WHERE n.recipient_email = ?';
+            $parameters = [$customerEmail, $customerEmail];
+            if (!$markAll) {
+                $idPlaceholders = implode(', ', array_fill(0, count($ids), '?'));
+                $sql .= ' AND n.id IN (' . $idPlaceholders . ')';
+                $parameters = array_merge($parameters, $ids);
+            }
+            $statement = $pdo->prepare($sql);
+            $statement->execute($parameters);
+            respond(200, ['marked' => $statement->rowCount()]);
+
         case 'admin-logout':
             requireMethod('POST');
             unset($_SESSION['admin_email']);
+            unset($_SESSION['admin_session_version']);
             session_regenerate_id(true);
             respond(200, ['ok' => true]);
 
@@ -127,17 +296,30 @@ try {
             if (!validPassword($input['newPassword'] ?? null)) {
                 respond(422, ['error' => 'Password must be at least 8 characters.']);
             }
-            $statement = $pdo->prepare('SELECT password_hash FROM admin_accounts WHERE email = ?');
-            $statement->execute([$_SESSION['admin_email']]);
-            $hash = $statement->fetchColumn();
-            if (!$hash || !password_verify((string) ($input['currentPassword'] ?? ''), $hash)) {
-                respond(401, ['error' => 'Current password is incorrect.']);
+            $pdo->beginTransaction();
+            try {
+                $statement = $pdo->prepare('SELECT password_hash, session_version FROM admin_accounts WHERE email = ? FOR UPDATE');
+                $statement->execute([$_SESSION['admin_email']]);
+                $account = $statement->fetch();
+                if (!$account || !password_verify((string) ($input['currentPassword'] ?? ''), $account['password_hash'])) {
+                    $pdo->rollBack();
+                    respond(401, ['error' => 'Current password is incorrect.']);
+                }
+                if (password_verify((string) $input['newPassword'], $account['password_hash'])) {
+                    $pdo->rollBack();
+                    respond(422, ['error' => 'Choose a password different from your current password.']);
+                }
+                $statement = $pdo->prepare('UPDATE admin_accounts SET password_hash = ?, session_version = session_version + 1 WHERE email = ?');
+                $statement->execute([password_hash($input['newPassword'], PASSWORD_DEFAULT), $_SESSION['admin_email']]);
+                $version = $pdo->prepare('SELECT session_version FROM admin_accounts WHERE email = ?');
+                $version->execute([$_SESSION['admin_email']]);
+                $nextSessionVersion = (int) $version->fetchColumn();
+                $pdo->commit();
+                $_SESSION['admin_session_version'] = $nextSessionVersion;
+            } catch (Throwable $error) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $error;
             }
-            if (password_verify((string) $input['newPassword'], $hash)) {
-                respond(422, ['error' => 'Choose a password different from your current password.']);
-            }
-            $statement = $pdo->prepare('UPDATE admin_accounts SET password_hash = ? WHERE email = ?');
-            $statement->execute([password_hash($input['newPassword'], PASSWORD_DEFAULT), $_SESSION['admin_email']]);
             respond(200, ['ok' => true]);
 
         case 'admin-invites':
@@ -240,6 +422,7 @@ try {
             $pdo->beginTransaction();
             try {
                 $pdo->prepare('DELETE FROM admin_accounts WHERE email = ?')->execute([$email]);
+                $pdo->prepare('DELETE FROM admin_notification_reads WHERE admin_email = ?')->execute([$email]);
                 $pdo->prepare('DELETE FROM admin_profiles WHERE email = ?')->execute([$email]);
                 $pdo->commit();
             } catch (Throwable $error) {
@@ -264,7 +447,7 @@ try {
 
         case 'admin-media-migrate':
             requireMethod('POST');
-            requireAdminAny(['products', 'banners', 'promo-cards', 'videos', 'offers']);
+            requireMasterAdmin();
             $pdo->beginTransaction();
             try {
                 $statement = $pdo->prepare('SELECT store_data, revision FROM shared_store WHERE store_key = ? FOR UPDATE');
@@ -456,16 +639,22 @@ try {
         case 'product-reviews-export':
             requireMethod('GET');
             requireAdmin('products');
+            $shared = getSharedStore($pdo);
             $statement = $pdo->query(
-                'SELECT product_id AS productId, customer_name AS name, rating, comment,
+                'SELECT product_id AS productId, customer_email, customer_name AS name, rating, comment,
                         DATE_FORMAT(created_at, \'%Y-%m-%d\') AS date
                  FROM product_reviews ORDER BY product_id ASC, created_at DESC, id DESC'
             );
+            $eligibleReviews = array_filter(
+                $statement->fetchAll(),
+                static fn (array $review): bool => hasDeliveredProductOrder($pdo, normalizeEmail($review['customer_email']), (string) $review['productId'], $shared)
+            );
             $reviews = array_map(static function (array $review): array {
+                unset($review['customer_email']);
                 $review['rating'] = (int) $review['rating'];
                 $review['verifiedPurchase'] = true;
                 return $review;
-            }, $statement->fetchAll());
+            }, array_values($eligibleReviews));
             respond(200, ['reviews' => $reviews]);
 
         case 'product-review':
@@ -832,6 +1021,7 @@ try {
                         'UPDATE shared_store SET store_data = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE store_key = ?'
                     );
                     $statement->execute([$serialized, 'main']);
+                    appendAdminNotificationsForEnquiryChanges($pdo, $currentData, $data);
                     $revision = $currentRevision + 1;
                 } else {
                     requireMasterAdmin();
@@ -878,6 +1068,29 @@ try {
             $result = updateSharedOrderStatus($pdo, $orderId, $status);
             if (!$result) respond(404, ['error' => 'Order not found.']);
             respond(200, ['order' => $result['order'], 'revision' => $result['revision']]);
+
+        case 'admin-enquiry-status':
+            requireMethod('POST');
+            requireAdmin('enquiries');
+            $input = readJson();
+            $enquiryId = cleanText($input['id'] ?? '', 80);
+            $status = cleanText($input['status'] ?? '', 20);
+            if ($enquiryId === '' || !in_array($status, ['New', 'Contacted', 'Closed'], true)) {
+                respond(422, ['error' => 'Enquiry ID or status is invalid.']);
+            }
+            $result = updateSharedEnquiryStatus($pdo, $enquiryId, $status);
+            if (!$result) respond(404, ['error' => 'Enquiry not found.']);
+            respond(200, ['enquiry' => $result['enquiry'], 'revision' => $result['revision']]);
+
+        case 'admin-enquiry-delete':
+            requireMethod('POST');
+            requireAdmin('enquiries');
+            $input = readJson();
+            $enquiryId = cleanText($input['id'] ?? '', 80);
+            if ($enquiryId === '') respond(422, ['error' => 'Enquiry ID is required.']);
+            $result = deleteSharedEnquiry($pdo, $enquiryId);
+            if (!$result) respond(404, ['error' => 'Enquiry not found.']);
+            respond(200, ['deleted' => true, 'id' => $enquiryId, 'revision' => $result['revision']]);
 
         case 'enquiry-create':
             requireMethod('POST');
@@ -953,9 +1166,18 @@ function ensureSchema(PDO $pdo): void
         "CREATE TABLE IF NOT EXISTS admin_accounts (
             email VARCHAR(254) PRIMARY KEY,
             password_hash VARCHAR(255) NOT NULL,
+            session_version BIGINT UNSIGNED NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
+    $columnCheck = $pdo->prepare(
+        'SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+    );
+    $columnCheck->execute(['admin_accounts', 'session_version']);
+    if ((int) $columnCheck->fetchColumn() === 0) {
+        $pdo->exec('ALTER TABLE admin_accounts ADD COLUMN session_version BIGINT UNSIGNED NOT NULL DEFAULT 1');
+    }
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS admin_profiles (
             email VARCHAR(254) NOT NULL PRIMARY KEY,
@@ -1021,6 +1243,49 @@ function ensureSchema(PDO $pdo): void
             INDEX product_reviews_product_created (product_id, created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS admin_notifications (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            type VARCHAR(20) NOT NULL,
+            title VARCHAR(120) NOT NULL,
+            summary VARCHAR(255) NOT NULL,
+            href VARCHAR(255) NOT NULL,
+            recipient_email VARCHAR(254) NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX admin_notifications_type_id (type, id),
+            INDEX admin_notifications_recipient_id (recipient_email, id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+    $columnCheck->execute(['admin_notifications', 'recipient_email']);
+    if ((int) $columnCheck->fetchColumn() === 0) {
+        $pdo->exec('ALTER TABLE admin_notifications ADD COLUMN recipient_email VARCHAR(254) NULL');
+    }
+    $indexCheck = $pdo->prepare(
+        'SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?'
+    );
+    $indexCheck->execute(['admin_notifications', 'admin_notifications_recipient_id']);
+    if ((int) $indexCheck->fetchColumn() === 0) {
+        $pdo->exec('CREATE INDEX admin_notifications_recipient_id ON admin_notifications (recipient_email, id)');
+    }
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS admin_notification_reads (
+            notification_id BIGINT UNSIGNED NOT NULL,
+            admin_email VARCHAR(254) NOT NULL,
+            read_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (notification_id, admin_email),
+            INDEX admin_notification_reads_admin (admin_email)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS customer_notification_reads (
+            notification_id BIGINT UNSIGNED NOT NULL,
+            customer_email VARCHAR(254) NOT NULL,
+            read_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (notification_id, customer_email),
+            INDEX customer_notification_reads_customer (customer_email)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
 }
 
 function requireMethod(string $expected): void
@@ -1042,9 +1307,21 @@ function currentAdminProfile(): array
 {
     global $pdo;
     if (empty($_SESSION['admin_email'])) respond(401, ['error' => 'Admin login is required.']);
+    $account = $pdo->prepare('SELECT session_version FROM admin_accounts WHERE email = ?');
+    $account->execute([normalizeEmail($_SESSION['admin_email'])]);
+    $sessionVersion = $account->fetchColumn();
+    if (
+        $sessionVersion === false ||
+        !isset($_SESSION['admin_session_version']) ||
+        (int) $_SESSION['admin_session_version'] !== (int) $sessionVersion
+    ) {
+        unset($_SESSION['admin_email'], $_SESSION['admin_session_version']);
+        respond(401, ['error' => 'Your admin session has expired. Please sign in again.']);
+    }
     $profile = getAdminProfile($pdo, (string) $_SESSION['admin_email']);
     if (!$profile || $profile['status'] !== 'Active') {
         unset($_SESSION['admin_email']);
+        unset($_SESSION['admin_session_version']);
         respond(401, ['error' => 'This admin account is inactive or no longer exists.']);
     }
     return $profile;
@@ -1213,6 +1490,60 @@ function hasDeliveredProductOrder(PDO $pdo, string $email, string $productId, ar
     return false;
 }
 
+function insertAdminNotification(PDO $pdo, string $type, string $title, string $summary, string $href): void
+{
+    if (!$pdo->inTransaction()) {
+        throw new RuntimeException('Admin notifications must be stored with their shared-store change.');
+    }
+    if (!in_array($type, ['order', 'enquiry'], true)) {
+        throw new RuntimeException('The admin notification type is invalid.');
+    }
+    $statement = $pdo->prepare(
+        'INSERT INTO admin_notifications (type, title, summary, href) VALUES (?, ?, ?, ?)'
+    );
+    $statement->execute([$type, $title, $summary, $href]);
+}
+
+function insertCustomerOrderNotification(PDO $pdo, mixed $email, string $title, string $summary, string $href): void
+{
+    if (!$pdo->inTransaction()) {
+        throw new RuntimeException('Customer notifications must be stored with their shared-store change.');
+    }
+    $recipientEmail = normalizeEmail($email);
+    if (!filter_var($recipientEmail, FILTER_VALIDATE_EMAIL)) return;
+    $statement = $pdo->prepare(
+        'INSERT INTO admin_notifications (type, title, summary, href, recipient_email) VALUES (?, ?, ?, ?, ?)'
+    );
+    $statement->execute(['order', $title, $summary, $href, $recipientEmail]);
+}
+
+function appendAdminNotificationsForEnquiryChanges(PDO $pdo, array $currentData, array $newData): void
+{
+    $currentById = [];
+    foreach (($currentData['enquiries'] ?? []) as $enquiry) {
+        if (is_array($enquiry) && isset($enquiry['id'])) {
+            $currentById[(string) $enquiry['id']] = $enquiry;
+        }
+    }
+    foreach (($newData['enquiries'] ?? []) as $enquiry) {
+        if (!is_array($enquiry) || !isset($enquiry['id'])) continue;
+        $id = (string) $enquiry['id'];
+        if (!isset($currentById[$id])) {
+            insertAdminNotification($pdo, 'enquiry', 'New enquiry received', 'A new enquiry is ready for review.', '/admin/enquiries');
+            continue;
+        }
+        if (($currentById[$id]['status'] ?? null) !== ($enquiry['status'] ?? null)) {
+            insertAdminNotification(
+                $pdo,
+                'enquiry',
+                'Enquiry status updated',
+                'An enquiry status changed to ' . cleanText($enquiry['status'] ?? 'updated', 20) . '.',
+                '/admin/enquiries'
+            );
+        }
+    }
+}
+
 function normalizeStoreData(mixed $data): array
 {
     if (!is_array($data)) respond(422, ['error' => 'Shared store data must be an object.']);
@@ -1227,6 +1558,28 @@ function normalizeStoreData(mixed $data): array
         $normalized[$key] = $data[$key];
     }
     return $normalized;
+}
+
+function explicitProductStockQuantity(array $product): ?int
+{
+    if (!array_key_exists('stockQuantity', $product)) return null;
+
+    $quantity = $product['stockQuantity'];
+    if (
+        (is_int($quantity) && $quantity >= 0) ||
+        (
+            is_string($quantity) &&
+            preg_match('/^(0|[1-9][0-9]*)$/D', $quantity) &&
+            (
+                strlen($quantity) < strlen((string) PHP_INT_MAX) ||
+                (strlen($quantity) === strlen((string) PHP_INT_MAX) && strcmp($quantity, (string) PHP_INT_MAX) <= 0)
+            )
+        )
+    ) {
+        return (int) $quantity;
+    }
+
+    throw new ApiException(409, '"' . cleanText($product['name'] ?? 'A product', 160) . '" has an invalid unit count. Ask the administrator to correct its stock quantity.');
 }
 
 function storeMediaFile(string $mime, string|false $contents): string
@@ -1389,12 +1742,15 @@ function createOrderIdempotently(PDO $pdo, array $input): array
         }
 
         $normalizedItems = [];
+        $stockReservations = [];
         $subtotalPaise = 0;
         foreach ($requestedItems as $requestedItem) {
             $product = null;
-            foreach ($data['products'] as $candidate) {
+            $productIndex = null;
+            foreach ($data['products'] as $index => $candidate) {
                 if (is_array($candidate) && (string) ($candidate['id'] ?? '') === $requestedItem['id']) {
                     $product = $candidate;
+                    $productIndex = $index;
                     break;
                 }
             }
@@ -1405,6 +1761,26 @@ function createOrderIdempotently(PDO $pdo, array $input): array
             $stock = cleanText($product['stock'] ?? '', 40);
             if (!in_array(strtolower($stock), ['in stock', 'limited stock'], true)) {
                 throw new ApiException(409, '"' . cleanText($product['name'] ?? 'A product', 160) . '" is out of stock. Remove it or contact us for availability.');
+            }
+            $availableQuantity = explicitProductStockQuantity($product);
+            if ($availableQuantity === null && strtolower($stock) === 'limited stock') {
+                throw new ApiException(409, '"' . cleanText($product['name'] ?? 'A product', 160) . '" is marked Limited Stock but has no unit count. Ask the administrator to set its inventory quantity before ordering.');
+            }
+            if ($availableQuantity !== null) {
+                if ($availableQuantity < $requestedItem['qty']) {
+                    throw new ApiException(409, '"' . cleanText($product['name'] ?? 'A product', 160) . '" has only ' . $availableQuantity . ' unit(s) available. Reduce the quantity or contact us for availability.');
+                }
+                $remainingQuantity = $availableQuantity - $requestedItem['qty'];
+                $data['products'][$productIndex]['stockQuantity'] = $remainingQuantity;
+                if ($remainingQuantity === 0) {
+                    $data['products'][$productIndex]['stock'] = 'Out of Stock';
+                }
+                $stockReservations[] = [
+                    'productId' => $requestedItem['id'],
+                    'quantity' => $requestedItem['qty'],
+                    'stockStatusBefore' => strtolower($stock) === 'limited stock' ? 'Limited Stock' : 'In Stock',
+                    'exhaustedStock' => $remainingQuantity === 0,
+                ];
             }
             $catalogPrice = $product['price'] ?? null;
             if (!is_numeric($catalogPrice) || !is_finite((float) $catalogPrice) || (float) $catalogPrice <= 0) {
@@ -1452,6 +1828,10 @@ function createOrderIdempotently(PDO $pdo, array $input): array
             'idempotencyKey' => $idempotencyKey,
             'idempotencyHash' => $requestHash,
         ];
+        if ($stockReservations !== []) {
+            $record['stockReservations'] = $stockReservations;
+            $record['stockReservationState'] = 'reserved';
+        }
         array_unshift($data['orders'], $record);
         $updated = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($updated === false || strlen($updated) > MAX_SHARED_STORE_BYTES) {
@@ -1459,6 +1839,14 @@ function createOrderIdempotently(PDO $pdo, array $input): array
         }
         $statement = $pdo->prepare('UPDATE shared_store SET store_data = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE store_key = ?');
         $statement->execute([$updated, 'main']);
+        insertAdminNotification($pdo, 'order', 'New order received', 'A new order is ready for review.', '/admin/orders');
+        insertCustomerOrderNotification(
+            $pdo,
+            $record['email'],
+            'Order confirmed',
+            'Order #' . cleanText($record['id'], 80) . ' has been received.',
+            '/account?tab=orders'
+        );
         $pdo->commit();
         return ['order' => $record, 'duplicate' => false, 'revision' => (int) $shared['revision'] + 1];
     } catch (Throwable $error) {
@@ -1501,13 +1889,13 @@ function appendSharedRecordIdempotently(PDO $pdo, string $collection, array $rec
 {
     $pdo->beginTransaction();
     try {
-        $statement = $pdo->prepare('SELECT store_data FROM shared_store WHERE store_key = ? FOR UPDATE');
+        $statement = $pdo->prepare('SELECT store_data, revision FROM shared_store WHERE store_key = ? FOR UPDATE');
         $statement->execute(['main']);
-        $serialized = $statement->fetchColumn();
-        if ($serialized === false) {
+        $shared = $statement->fetch();
+        if (!$shared) {
             throw new ApiException(503, 'Store setup is not complete. Ask the administrator to initialize the shared store.');
         }
-        $data = json_decode($serialized, true);
+        $data = json_decode($shared['store_data'], true);
         if (!is_array($data) || !is_array($data[$collection] ?? null)) {
             throw new RuntimeException('Shared store is missing the ' . $collection . ' collection.');
         }
@@ -1520,7 +1908,7 @@ function appendSharedRecordIdempotently(PDO $pdo, string $collection, array $rec
                     throw new ApiException(409, 'This retry key was already used for different enquiry details. Review the form and submit again.');
                 }
                 $pdo->commit();
-                return ['enquiry' => $existing, 'duplicate' => true];
+                return ['enquiry' => $existing, 'duplicate' => true, 'revision' => (int) $shared['revision']];
             }
         }
 
@@ -1531,8 +1919,106 @@ function appendSharedRecordIdempotently(PDO $pdo, string $collection, array $rec
         }
         $statement = $pdo->prepare('UPDATE shared_store SET store_data = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE store_key = ?');
         $statement->execute([$updated, 'main']);
+        if ($collection === 'enquiries') {
+            insertAdminNotification($pdo, 'enquiry', 'New enquiry received', 'A new enquiry is ready for review.', '/admin/enquiries');
+        }
         $pdo->commit();
-        return ['enquiry' => $record, 'duplicate' => false];
+        return ['enquiry' => $record, 'duplicate' => false, 'revision' => (int) $shared['revision'] + 1];
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $error;
+    }
+}
+
+function updateSharedEnquiryStatus(PDO $pdo, string $enquiryId, string $status): array|false
+{
+    $pdo->beginTransaction();
+    try {
+        $statement = $pdo->prepare('SELECT store_data, revision FROM shared_store WHERE store_key = ? FOR UPDATE');
+        $statement->execute(['main']);
+        $shared = $statement->fetch();
+        if (!$shared) {
+            $pdo->rollBack();
+            return false;
+        }
+        $data = json_decode($shared['store_data'], true);
+        if (!is_array($data) || !is_array($data['enquiries'] ?? null)) {
+            throw new RuntimeException('Shared store is missing the enquiries collection.');
+        }
+        $updatedEnquiry = false;
+        $statusChanged = false;
+        foreach ($data['enquiries'] as &$enquiry) {
+            if (is_array($enquiry) && (string) ($enquiry['id'] ?? '') === $enquiryId) {
+                if ((string) ($enquiry['status'] ?? '') === $status) {
+                    $updatedEnquiry = $enquiry;
+                    break;
+                }
+                $enquiry['status'] = $status;
+                $updatedEnquiry = $enquiry;
+                $statusChanged = true;
+                break;
+            }
+        }
+        unset($enquiry);
+        if (!$updatedEnquiry) {
+            $pdo->rollBack();
+            return false;
+        }
+        if (!$statusChanged) {
+            $pdo->commit();
+            return ['enquiry' => $updatedEnquiry, 'revision' => (int) $shared['revision']];
+        }
+        $updated = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($updated === false || strlen($updated) > MAX_SHARED_STORE_BYTES) {
+            throw new ApiException(413, 'Store data is too large to update this enquiry.');
+        }
+        $statement = $pdo->prepare('UPDATE shared_store SET store_data = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE store_key = ?');
+        $statement->execute([$updated, 'main']);
+        insertAdminNotification($pdo, 'enquiry', 'Enquiry status updated', 'An enquiry status changed to ' . $status . '.', '/admin/enquiries');
+        $pdo->commit();
+        return ['enquiry' => $updatedEnquiry, 'revision' => (int) $shared['revision'] + 1];
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $error;
+    }
+}
+
+function deleteSharedEnquiry(PDO $pdo, string $enquiryId): array|false
+{
+    $pdo->beginTransaction();
+    try {
+        $statement = $pdo->prepare('SELECT store_data, revision FROM shared_store WHERE store_key = ? FOR UPDATE');
+        $statement->execute(['main']);
+        $shared = $statement->fetch();
+        if (!$shared) {
+            $pdo->rollBack();
+            return false;
+        }
+        $data = json_decode($shared['store_data'], true);
+        if (!is_array($data) || !is_array($data['enquiries'] ?? null)) {
+            throw new RuntimeException('Shared store is missing the enquiries collection.');
+        }
+        $deleted = false;
+        foreach ($data['enquiries'] as $index => $enquiry) {
+            if (is_array($enquiry) && (string) ($enquiry['id'] ?? '') === $enquiryId) {
+                array_splice($data['enquiries'], $index, 1);
+                $deleted = true;
+                break;
+            }
+        }
+        if (!$deleted) {
+            $pdo->rollBack();
+            return false;
+        }
+        $updated = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($updated === false || strlen($updated) > MAX_SHARED_STORE_BYTES) {
+            throw new ApiException(413, 'Store data is too large to delete this enquiry.');
+        }
+        $statement = $pdo->prepare('UPDATE shared_store SET store_data = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE store_key = ?');
+        $statement->execute([$updated, 'main']);
+        insertAdminNotification($pdo, 'enquiry', 'Enquiry removed', 'An enquiry was removed from the inbox.', '/admin/enquiries');
+        $pdo->commit();
+        return ['revision' => (int) $shared['revision'] + 1];
     } catch (Throwable $error) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         throw $error;
@@ -1555,10 +2041,86 @@ function updateSharedOrderStatus(PDO $pdo, string $orderId, string $status): arr
             throw new RuntimeException('Shared store is missing the orders collection.');
         }
         $updatedOrder = false;
+        $statusChanged = false;
         foreach ($data['orders'] as &$order) {
             if ((string) ($order['id'] ?? '') === $orderId) {
+                $previousStatus = (string) ($order['status'] ?? '');
+                if ($previousStatus === $status) {
+                    $updatedOrder = $order;
+                    break;
+                }
+                if ($previousStatus === 'Delivered' && $status === 'Cancelled') {
+                    throw new ApiException(409, 'A delivered order cannot be cancelled or returned to stock through this status update.');
+                }
+                $reservations = $order['stockReservations'] ?? [];
+                $reservationState = $order['stockReservationState'] ?? '';
+                if (!is_array($reservations)) {
+                    throw new RuntimeException('An order has invalid stock reservation data.');
+                }
+
+                if ($reservations !== [] && $previousStatus !== $status) {
+                    $releaseStock = $status === 'Cancelled' && $previousStatus !== 'Cancelled' && $reservationState === 'reserved';
+                    $reReserveStock = $previousStatus === 'Cancelled' && $status !== 'Cancelled' && $reservationState === 'released';
+                    if ($releaseStock || $reReserveStock) {
+                        foreach ($reservations as $reservationIndex => $reservation) {
+                            if (
+                                !is_array($reservation) ||
+                                !is_string($reservation['productId'] ?? null) ||
+                                !is_int($reservation['quantity'] ?? null) ||
+                                $reservation['quantity'] < 1 ||
+                                !in_array($reservation['stockStatusBefore'] ?? null, ['In Stock', 'Limited Stock'], true) ||
+                                !is_bool($reservation['exhaustedStock'] ?? null)
+                            ) {
+                                throw new RuntimeException('An order has invalid stock reservation data.');
+                            }
+                            $productIndex = null;
+                            foreach ($data['products'] ?? [] as $index => $product) {
+                                if (is_array($product) && (string) ($product['id'] ?? '') === $reservation['productId']) {
+                                    $productIndex = $index;
+                                    break;
+                                }
+                            }
+                            if ($productIndex === null) {
+                                throw new ApiException(409, 'Stock for this order can no longer be updated because a reserved product is missing.');
+                            }
+                            $availableQuantity = explicitProductStockQuantity($data['products'][$productIndex]);
+                            if ($availableQuantity === null) {
+                                throw new ApiException(409, 'Stock for this order can no longer be updated because a reserved product no longer has a unit count.');
+                            }
+                            if ($releaseStock) {
+                                if ($availableQuantity > PHP_INT_MAX - $reservation['quantity']) {
+                                    throw new ApiException(409, 'Stock for this order cannot be restored safely. Ask the administrator to review the product quantity.');
+                                }
+                                $data['products'][$productIndex]['stockQuantity'] = $availableQuantity + $reservation['quantity'];
+                                if (
+                                    $reservation['exhaustedStock'] &&
+                                    strtolower(cleanText($data['products'][$productIndex]['stock'] ?? '', 40)) === 'out of stock'
+                                ) {
+                                    $data['products'][$productIndex]['stock'] = $reservation['stockStatusBefore'];
+                                }
+                            } else {
+                                $stockStatusBefore = cleanText($data['products'][$productIndex]['stock'] ?? '', 40);
+                                $stock = strtolower($stockStatusBefore);
+                                if (!in_array($stock, ['in stock', 'limited stock'], true) || $availableQuantity < $reservation['quantity']) {
+                                    throw new ApiException(409, 'This order cannot be reopened because the reserved product no longer has enough available units.');
+                                }
+                                $remainingQuantity = $availableQuantity - $reservation['quantity'];
+                                $data['products'][$productIndex]['stockQuantity'] = $remainingQuantity;
+                                if ($remainingQuantity === 0) {
+                                    $data['products'][$productIndex]['stock'] = 'Out of Stock';
+                                }
+                                $reservation['stockStatusBefore'] = $stock === 'limited stock' ? 'Limited Stock' : 'In Stock';
+                                $reservation['exhaustedStock'] = $remainingQuantity === 0;
+                                $reservations[$reservationIndex] = $reservation;
+                            }
+                        }
+                        $order['stockReservations'] = $reservations;
+                        $order['stockReservationState'] = $releaseStock ? 'released' : 'reserved';
+                    }
+                }
                 $order['status'] = $status;
                 $updatedOrder = $order;
+                $statusChanged = true;
                 break;
             }
         }
@@ -1567,6 +2129,10 @@ function updateSharedOrderStatus(PDO $pdo, string $orderId, string $status): arr
             $pdo->rollBack();
             return false;
         }
+        if (!$statusChanged) {
+            $pdo->commit();
+            return ['order' => $updatedOrder, 'revision' => (int) $shared['revision']];
+        }
         $updated = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($updated === false || strlen($updated) > MAX_SHARED_STORE_BYTES) {
             $pdo->rollBack();
@@ -1574,6 +2140,14 @@ function updateSharedOrderStatus(PDO $pdo, string $orderId, string $status): arr
         }
         $statement = $pdo->prepare('UPDATE shared_store SET store_data = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE store_key = ?');
         $statement->execute([$updated, 'main']);
+        insertAdminNotification($pdo, 'order', 'Order status updated', 'An order status changed to ' . $status . '.', '/admin/orders');
+        insertCustomerOrderNotification(
+            $pdo,
+            $updatedOrder['email'] ?? '',
+            'Order ' . strtolower($status),
+            'Order #' . cleanText($updatedOrder['id'] ?? '', 80) . ' is now ' . strtolower($status) . '.',
+            '/account?tab=orders'
+        );
         $pdo->commit();
         return ['order' => $updatedOrder, 'revision' => (int) $shared['revision'] + 1];
     } catch (Throwable $error) {
@@ -1599,7 +2173,15 @@ function publicStoreData(array $data): array
         if (array_key_exists($key, $data)) {
             $public[$key] = $key === 'products'
                 ? array_values(array_filter($data[$key], 'isPublishableProduct'))
-                : $data[$key];
+                : ($key === 'videos'
+                    ? (is_array($data[$key]) ? array_values(array_filter(
+                        $data[$key],
+                        static fn ($video): bool => is_array($video) &&
+                            ($video['active'] ?? false) === true &&
+                            is_string($video['youtubeId'] ?? null) &&
+                            preg_match('/^[A-Za-z0-9_-]{11}$/D', $video['youtubeId']) === 1
+                    )) : [])
+                    : $data[$key]);
         }
     }
     return $public;
@@ -1650,6 +2232,7 @@ function setCustomerSession(array $customer): void
 {
     session_regenerate_id(true);
     unset($_SESSION['admin_email']);
+    unset($_SESSION['admin_session_version']);
     $_SESSION['customer_email'] = $customer['email'];
 }
 

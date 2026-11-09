@@ -17,7 +17,8 @@ export default function ProductCard({ product }) {
   const wishlisted = isWishlisted(product.id);
 
   const discount = calcDiscount(product.price, product.oldPrice);
-  const outOfStock = product.stock === 'Out of Stock';
+  const outOfStock = product.stock === 'Out of Stock' ||
+    (product.stockQuantity != null && Number(product.stockQuantity) <= 0);
 
   const handleAddToCart = () => addItem(product, 1);
   const handleBuyNow = () => {
@@ -97,7 +98,9 @@ export default function ProductCard({ product }) {
             }`}
             aria-hidden="true"
           />
-          {product.stock}
+          {product.stock === 'Limited Stock' && Number.isInteger(Number(product.stockQuantity))
+            ? `${product.stock} · ${product.stockQuantity} available`
+            : product.stock}
         </p>
 
         {/* Price */}

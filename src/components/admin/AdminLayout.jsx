@@ -102,7 +102,18 @@ function Sidebar({ onNavigate }) {
 }
 
 export default function AdminLayout() {
-  const { isAdmin, currentUser, sharedStoreReady, sharedStoreSaving, sharedStoreDirty, sharedStoreError, sharedStoreConflict, adminSessionError } = useAdmin();
+  const {
+    isAdmin,
+    currentUser,
+    sharedStoreReady,
+    sharedStoreSaving,
+    sharedStoreDirty,
+    sharedStoreError,
+    sharedStoreConflict,
+    recoveredDraftConflicts,
+    resolveRecoveredDraftConflict,
+    adminSessionError,
+  } = useAdmin();
   const [mobileOpen, setMobileOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -170,6 +181,36 @@ export default function AdminLayout() {
                 ? `Save conflict: ${sharedStoreError} Your unsaved edits are still in this tab; do not refresh or close it until they are recovered.`
                 : `Shared store sync failed: ${sharedStoreError}`}
             </p>
+          )}
+          {recoveredDraftConflicts.length > 0 && (
+            <section aria-label="Recovered draft conflicts" className="mb-4 space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+              <div>
+                <h2 className="font-bold">Choose how to resolve recovered edits</h2>
+                <p className="mt-1">The server version is shown alongside your saved draft. Choose one for each conflicting field before saving.</p>
+              </div>
+              {recoveredDraftConflicts.map((conflict) => {
+                const pathLabel = conflict.path.map((part) => (
+                  typeof part === 'string' ? part : `record ${part.recordId}`
+                )).join(' → ');
+                const formatValue = (value) => value === undefined ? '(deleted)' : JSON.stringify(value, null, 2);
+                return (
+                  <article key={conflict.id} className="rounded-md border border-amber-200 bg-white p-3">
+                    <h3 className="font-semibold">{pathLabel}</h3>
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs font-semibold text-secondary">Compare saved draft and server versions</summary>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        <div><p className="text-xs font-bold">Your draft</p><pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs">{formatValue(conflict.local)}</pre></div>
+                        <div><p className="text-xs font-bold">Server</p><pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs">{formatValue(conflict.remote)}</pre></div>
+                      </div>
+                    </details>
+                    <div className="mt-3 flex gap-2">
+                      <button type="button" onClick={() => resolveRecoveredDraftConflict(conflict.id, 'local')} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white">Keep my draft</button>
+                      <button type="button" onClick={() => resolveRecoveredDraftConflict(conflict.id, 'remote')} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700">Keep server version</button>
+                    </div>
+                  </article>
+                );
+              })}
+            </section>
           )}
           {adminSessionError && (
             <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-700">

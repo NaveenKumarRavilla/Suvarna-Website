@@ -26,6 +26,7 @@ export default function AdminPolicies() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deletingPolicy, setDeletingPolicy] = useState(null);
 
   useEffect(() => {
     try {
@@ -102,19 +103,39 @@ export default function AdminPolicies() {
 
     const policy = { title, summary, items };
     setSaving(true);
-    const saved = editingId ? await updatePolicy(id, policy) : await addPolicy(id, policy);
-    setSaving(false);
-    if (!saved) { setError('Policy was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'); return; }
-
-    closeEditor();
-    setNotice(`"${title}" was ${editingId ? 'updated' : 'added'}.`);
+    try {
+      const result = editingId ? await updatePolicy(id, policy) : await addPolicy(id, policy);
+      const saved = editingId ? result : result.ok;
+      if (!saved) {
+        setError(editingId
+          ? 'Policy was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'
+          : result.error);
+        return;
+      }
+      const action = editingId ? 'updated' : 'added';
+      closeEditor();
+      setNotice(`"${title}" was ${action}.`);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const removePolicy = (id) => {
+  const removePolicy = async (id) => {
     if (!window.confirm(`Delete "${policies[id].title}"? This will remove its public policy page and links.`)) return;
-    deletePolicy(id);
-    if (editingId === id) closeEditor();
-    setNotice(`"${policies[id].title}" was deleted.`);
+    setDeletingPolicy(id);
+    setError('');
+    try {
+      const title = policies[id].title;
+      const deleted = await deletePolicy(id);
+      if (!deleted) {
+        setError('Policy deletion was not confirmed by the database. The policy has been restored; retry after resolving the shared-store error.');
+        return;
+      }
+      if (editingId === id) closeEditor();
+      setNotice(`"${title}" was deleted.`);
+    } finally {
+      setDeletingPolicy(null);
+    }
   };
 
   return (
@@ -240,7 +261,7 @@ export default function AdminPolicies() {
                   </Link>
                   <div className="flex items-center gap-3">
                     <button type="button" onClick={() => editPolicy(id)} className="text-xs font-semibold text-secondary hover:underline">Edit</button>
-                    <button type="button" onClick={() => removePolicy(id)} aria-label={`Delete ${policy.title}`} className="rounded-lg p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600">
+                    <button type="button" onClick={() => removePolicy(id)} disabled={deletingPolicy === id} aria-label={`Delete ${policy.title}`} className="rounded-lg p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50">
                       <Trash2 size={14} />
                     </button>
                   </div>

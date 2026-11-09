@@ -24,7 +24,11 @@ const productCartData = (product) => ({
   oldPrice: Number(product.oldPrice) || Number(product.price),
   image: product.images?.[0] || product.image || '',
   stock: product.stock || '',
-  unavailable: !isAvailableStock(product.stock),
+  stockQuantity: product.stockQuantity == null
+    ? null
+    : Number.isInteger(Number(product.stockQuantity)) ? Number(product.stockQuantity) : null,
+  unavailable: !isAvailableStock(product.stock) ||
+    (product.stockQuantity != null && Number(product.stockQuantity) <= 0),
   productIdentity: productIdentity(product),
 });
 
@@ -68,22 +72,24 @@ function cartReducer(state, action) {
       if (existing) {
         return {
           ...state,
-          items: state.items.map((i) =>
-            normalizeProductId(i.id) === id
-              ? {
+          items: state.items.map((i) => {
+            if (normalizeProductId(i.id) !== id) return i;
+            const nextQty = normalizeQuantity(i.qty + quantity);
+            return {
                   ...i,
                   id,
                   ...productData,
+                  unavailable: productData.unavailable ||
+                    (productData.stockQuantity != null && nextQty > productData.stockQuantity),
                   identityChanged: false,
-                  qty: normalizeQuantity(i.qty + quantity),
+                  qty: nextQty,
                   priceChanged:
                     Boolean(i.priceChanged) || priceInPaise(i.price) !== priceInPaise(product.price),
                   previousPrice:
                     i.previousPrice ??
                     (priceInPaise(i.price) !== priceInPaise(product.price) ? i.price : undefined),
-                }
-              : i
-          ),
+            };
+          }),
         };
       }
       return {
@@ -124,7 +130,8 @@ function cartReducer(state, action) {
           identityChanged: false,
           priceChanged: Boolean(item.priceChanged) || priceChanged,
           previousPrice: item.previousPrice ?? (priceChanged ? item.price : undefined),
-          unavailable: productData.unavailable,
+          unavailable: productData.unavailable ||
+            (productData.stockQuantity != null && item.qty > productData.stockQuantity),
         };
         if (JSON.stringify(nextItem) !== JSON.stringify(item)) changed = true;
         return nextItem;
@@ -147,9 +154,18 @@ function cartReducer(state, action) {
       return {
         ...state,
         items: state.items
-          .map((i) =>
-            normalizeProductId(i.id) === normalizeProductId(action.id) ? { ...i, qty: normalizeQuantity(action.qty) } : i
-          )
+          .map((item) => {
+            if (normalizeProductId(item.id) !== normalizeProductId(action.id)) return item;
+            const qty = normalizeQuantity(action.qty);
+            return {
+              ...item,
+              qty,
+              unavailable: item.identityChanged || item.stock === 'Out of Stock' ||
+                (item.stockQuantity == null
+                  ? item.unavailable
+                  : qty > item.stockQuantity),
+            };
+          })
           .filter((i) => i.qty > 0),
       };
     case 'CLEAR_CART':

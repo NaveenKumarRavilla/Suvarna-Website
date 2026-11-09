@@ -6,6 +6,7 @@ import { getPolicyPath, policyOptions } from '../data/policies';
 import Button from '../components/common/Button';
 
 const BUSINESS_HOURS = 'Mon - Sat: 10:00 AM - 8:00 PM';
+const ENQUIRY_RETRY_STORAGE_KEY = 'suvarna_pending_enquiry_requests';
 
 const inputCls =
   'w-full rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-700 outline-none transition focus:border-secondary focus:bg-white focus:ring-2 focus:ring-secondary/20';
@@ -23,6 +24,50 @@ export default function Contact() {
   const phoneHref = String(settings.phone || '').replace(/\s/g, '');
   const whatsappNumber = String(settings.whatsapp || '').replace(/\D/g, '');
   const whatsappHref = (message) => `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
+  const fingerprintEnquiry = async (value) => {
+    const bytes = new TextEncoder().encode(value);
+    try {
+      if (globalThis.crypto?.subtle) {
+        const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+        return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+      }
+    } catch (error) {
+      console.error('Could not securely fingerprint the enquiry retry key.', error);
+    }
+    return bytes.reduce((hash, byte) => Math.imul(hash ^ byte, 16777619) >>> 0, 2166136261).toString(16);
+  };
+  const getEnquiryRequestKey = async (fingerprint) => {
+    const fingerprintHash = await fingerprintEnquiry(fingerprint);
+    let saved = [];
+    try {
+      saved = JSON.parse(sessionStorage.getItem(ENQUIRY_RETRY_STORAGE_KEY) || '[]');
+    } catch (error) {
+      console.error('Could not read the pending enquiry retry keys.', error);
+    }
+    const requests = Array.isArray(saved) ? saved : [];
+    const existing = requests.find((request) => request.fingerprintHash === fingerprintHash);
+    if (existing?.key) return existing.key;
+    const key = globalThis.crypto?.randomUUID?.() || `enq-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    try {
+      sessionStorage.setItem(ENQUIRY_RETRY_STORAGE_KEY, JSON.stringify([
+        ...requests.filter((request) => request.key !== key),
+        { fingerprintHash, key },
+      ].slice(-20)));
+    } catch (error) {
+      console.error('Could not save the pending enquiry retry key.', error);
+    }
+    return key;
+  };
+  const clearEnquiryRequestKey = (key) => {
+    try {
+      const requests = JSON.parse(sessionStorage.getItem(ENQUIRY_RETRY_STORAGE_KEY) || '[]');
+      sessionStorage.setItem(ENQUIRY_RETRY_STORAGE_KEY, JSON.stringify(
+        (Array.isArray(requests) ? requests : []).filter((request) => request.key !== key)
+      ));
+    } catch (storageError) {
+      console.error('Could not clear the confirmed enquiry retry key.', storageError);
+    }
+  };
   const infoCards = [
     { icon: Phone, title: 'Call Us', lines: [settings.phone, BUSINESS_HOURS], href: `tel:${phoneHref}` },
     { icon: Mail, title: 'Email Us', lines: [settings.email, 'We reply within 24 hours'], href: `mailto:${settings.email}` },
@@ -44,7 +89,7 @@ export default function Contact() {
     if (enquiryRequestRef.current.fingerprint !== fingerprint) {
       enquiryRequestRef.current = {
         fingerprint,
-        key: globalThis.crypto?.randomUUID?.() || `enq-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        key: await getEnquiryRequestKey(fingerprint),
       };
     }
     setSending(true);
@@ -58,6 +103,7 @@ export default function Contact() {
       setError(result.error);
       return;
     }
+    clearEnquiryRequestKey(enquiryRequestRef.current.key);
     enquiryRequestRef.current = { fingerprint: '', key: '' };
     setError('');
     setSent(true);

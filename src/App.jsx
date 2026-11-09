@@ -93,6 +93,11 @@ function ApplicationShell() {
       <ScrollToTop />
       <div className="flex min-h-screen flex-col">
         <Header />
+        {storefrontDataAvailable && storefrontError && (
+          <p role="status" className="mx-auto mt-3 w-[calc(100%-2rem)] max-w-8xl rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-900">
+            The latest store data could not be refreshed. Showing the last successfully loaded catalogue.
+          </p>
+        )}
         <CategoryNav />
         <main className="flex-1">
                   <Suspense fallback={<div role="status" className="flex min-h-64 items-center justify-center text-sm text-slate-600">Loading page…</div>}>

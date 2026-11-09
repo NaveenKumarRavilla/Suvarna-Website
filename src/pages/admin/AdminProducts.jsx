@@ -19,7 +19,7 @@ const blankConfiguration = () => ([
 ]);
 
 const emptyForm = () => ({
-  name: '', brand: '', category: 'laptops', price: '', oldPrice: '', stock: 'In Stock', images: [],
+  name: '', brand: '', category: 'laptops', price: '', oldPrice: '', stock: 'In Stock', stockQuantity: '', images: [],
   configuration: blankConfiguration(), featured: false, description: '',
   warrantyKind: 'Standard Warranty', warrantyDuration: '1', warrantyUnit: 'Year',
 });
@@ -28,8 +28,8 @@ const stockOptions = ['In Stock', 'Limited Stock', 'Out of Stock'];
 const inlineInputCls = 'w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 outline-none transition focus:border-secondary focus:ring-2 focus:ring-secondary/20';
 const toSpecKey = (key) => key.trim().toLowerCase().replace(/[^a-z0-9]+(.)?/g, (_, char) => char ? char.toUpperCase() : '');
 const productCsvHeaders = [
-  'id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'featured',
-  'description', 'warranty', 'image', 'images', 'clearImages', 'specs',
+  'id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'stockQuantity', 'featured',
+  'description', 'warranty', 'clearImages', 'specs',
   'calculatedRating', 'calculatedReviewCount', 'customerReviewsExportOnly',
 ];
 const calculatedProductFields = new Set([
@@ -55,7 +55,7 @@ const parseProductCsv = (text) => {
   const aliases = {
     id: 'id', productid: 'id', name: 'name', productname: 'name', brand: 'brand', productbrand: 'brand',
     category: 'category', productcategory: 'category', price: 'price', productprice: 'price',
-    oldprice: 'oldPrice', stock: 'stock', featured: 'featured', description: 'description',
+    oldprice: 'oldPrice', stock: 'stock', stockquantity: 'stockQuantity', availableunits: 'stockQuantity', featured: 'featured', description: 'description',
     warranty: 'warranty', image: 'image', images: 'images', clearimages: 'clearImages', specs: 'specs',
     rating: 'rating', reviews: 'reviews',
     calculatedrating: 'calculatedRating', averagerating: 'calculatedRating',
@@ -89,6 +89,15 @@ const parseProductCsv = (text) => {
     if (!name || !brand || !category) throw new Error(`Row ${rowNumber}: name, brand, and category are required.`);
     if (!Number.isFinite(price) || price <= 0) throw new Error(`Row ${rowNumber}: price must be a positive number.`);
     if (!Number.isFinite(oldPrice) || oldPrice <= 0) throw new Error(`Row ${rowNumber}: oldPrice must be a positive number.`);
+    const stock = Object.hasOwn(record, 'stock') ? record.stock.trim() : 'In Stock';
+    const stockQuantityValue = (record.stockQuantity || '').trim();
+    const stockQuantity = stockQuantityValue ? Number(stockQuantityValue) : undefined;
+    if (stockQuantityValue && (!Number.isInteger(stockQuantity) || stockQuantity < 0)) {
+      throw new Error(`Row ${rowNumber}: stockQuantity must be a non-negative whole number.`);
+    }
+    if (stock === 'Limited Stock' && (stockQuantity === undefined || stockQuantity < 1)) {
+      throw new Error(`Row ${rowNumber}: stockQuantity must be at least 1 for products marked Limited Stock.`);
+    }
 
     const hasImage = Object.hasOwn(record, 'image') && record.image.trim() !== '';
     const images = Object.hasOwn(record, 'images') && record.images.trim() !== ''
@@ -113,7 +122,8 @@ const parseProductCsv = (text) => {
     }
     const product = { name, brand, category, price };
     if (Object.hasOwn(record, 'oldPrice')) product.oldPrice = oldPrice;
-    if (Object.hasOwn(record, 'stock')) product.stock = (record.stock || '').trim() || 'In Stock';
+    if (Object.hasOwn(record, 'stock')) product.stock = stock;
+    if (stockQuantity !== undefined) product.stockQuantity = stockQuantity;
     if (Object.hasOwn(record, 'featured')) product.featured = ['true', '1', 'yes'].includes(featuredValue);
     if (Object.hasOwn(record, 'description')) product.description = record.description;
     if (Object.hasOwn(record, 'warranty')) product.warranty = record.warranty;
@@ -130,7 +140,7 @@ const parseProductCsv = (text) => {
     if (specs !== undefined) product.specs = specs;
     for (const [field, value] of Object.entries(record)) {
       if (
-        ['id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'featured', 'description', 'warranty', 'image', 'images', 'clearImages', 'specs']
+        ['id', 'name', 'brand', 'category', 'price', 'oldPrice', 'stock', 'stockQuantity', 'featured', 'description', 'warranty', 'image', 'images', 'clearImages', 'specs']
           .includes(field) ||
         calculatedProductFields.has(field)
       ) continue;
@@ -239,7 +249,7 @@ export default function AdminProducts() {
     setAdminFormDirty(true);
     setForm({
       name: clone ? `Copy of ${product.name || ''}` : product.name || '',
-      brand: product.brand || '', category: product.category || 'laptops', price: product.price || '', oldPrice: product.oldPrice || '', stock: product.stock || 'In Stock', images: productImages,
+      brand: product.brand || '', category: product.category || 'laptops', price: product.price || '', oldPrice: product.oldPrice || '', stock: product.stock || 'In Stock', stockQuantity: product.stockQuantity == null ? '' : String(product.stockQuantity), images: productImages,
       configuration: configuration.length ? configuration : blankConfiguration(), featured: clone ? false : !!product.featured, description: product.description || '', ...warrantyFormValues(product.warranty),
     });
     setFormOpen(true);
@@ -345,6 +355,15 @@ export default function AdminProducts() {
       setFormError(`This product cannot appear in the storefront: ${publishabilityIssue}`);
       return;
     }
+    const stockQuantity = form.stockQuantity === '' ? undefined : Number(form.stockQuantity);
+    if (form.stock === 'Limited Stock' && (!Number.isInteger(stockQuantity) || stockQuantity < 1)) {
+      setFormError('Enter the available whole-unit quantity before marking this product Limited Stock.');
+      return;
+    }
+    if (form.stockQuantity !== '' && (!Number.isInteger(stockQuantity) || stockQuantity < 0)) {
+      setFormError('Available units must be a non-negative whole number.');
+      return;
+    }
     setFormError('');
     const warrantyUnit = Number(form.warrantyDuration) === 1 ? form.warrantyUnit : `${form.warrantyUnit}s`;
     const payload = {
@@ -353,6 +372,8 @@ export default function AdminProducts() {
       specs: { ...specs },
       description: form.description.trim(), warranty: `${form.warrantyDuration} ${warrantyUnit} ${form.warrantyKind}`,
     };
+    if (stockQuantity !== undefined) payload.stockQuantity = stockQuantity;
+    else if (form.stock === 'Out of Stock') payload.stockQuantity = 0;
     setSavingProduct(true);
     try {
       const operationId = editing?.id || pendingCreateId || createPendingProductId();
@@ -387,7 +408,7 @@ export default function AdminProducts() {
         reviewsByProduct.set(key, productReviews);
       });
       const dynamicHeaders = products.flatMap((product) => Object.keys(product))
-        .filter((header) => !calculatedProductFields.has(header));
+        .filter((header) => !calculatedProductFields.has(header) && !['image', 'images'].includes(header));
       const headers = [...new Set([...productCsvHeaders, ...dynamicHeaders])];
       downloadCsv('suvarna-products.csv', headers, products.map((product) => {
         const productReviews = reviewsByProduct.get(String(product.id)) || [];
@@ -494,7 +515,7 @@ export default function AdminProducts() {
         }
       />
 
-      <p className="mb-4 text-xs text-slate-500">Import merges rows by product ID; matching IDs update supplied product fields, and new products receive generated IDs. Blank image fields preserve existing images; set clearImages to TRUE to remove them. Products can be saved without images and use a display placeholder. Export includes product fields, image data, specifications, and customer reviews. Calculated rating, review count, and customer reviews are export-only and ignored during import.</p>
+      <p className="mb-4 text-xs text-slate-500">Import merges rows by product ID; matching IDs update supplied product fields, and new products receive generated IDs. Blank image fields preserve existing images; set clearImages to TRUE to remove them. Products can be saved without images and use a display placeholder. Export includes product fields, specifications, and customer reviews, but excludes image columns. Calculated rating, review count, and customer reviews are export-only and ignored during import.</p>
       {importError && <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{importError}</p>}
       {importStatus && <p role="status" className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{importStatus}</p>}
 
@@ -531,6 +552,18 @@ export default function AdminProducts() {
                   <Field label="Price (₹) *"><input required type="number" min="1" value={form.price} onChange={set('price')} className={inputCls} placeholder="53990" /></Field>
                   <Field label="Old Price (₹)"><input type="number" min="0" value={form.oldPrice} onChange={set('oldPrice')} className={inputCls} placeholder="65990" /></Field>
                   <div className="sm:col-span-2 xl:col-span-1 2xl:col-span-2"><Field label="Stock Status"><select value={form.stock} onChange={set('stock')} className={inputCls}>{stockOptions.map((status) => <option key={status}>{status}</option>)}</select></Field></div>
+                  <div className="sm:col-span-2 xl:col-span-1 2xl:col-span-2"><Field label={form.stock === 'Limited Stock' ? 'Available units *' : 'Available units'}>
+                    <input
+                      required={form.stock === 'Limited Stock'}
+                      type="number"
+                      min={form.stock === 'Out of Stock' ? '0' : '1'}
+                      step="1"
+                      value={form.stockQuantity}
+                      onChange={set('stockQuantity')}
+                      className={inputCls}
+                      placeholder={form.stock === 'Limited Stock' ? 'Enter exact remaining quantity' : 'Optional; leave blank for untracked stock'}
+                    />
+                  </Field></div>
                 </div>
                 <label className="mt-3 flex cursor-pointer items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"><input type="checkbox" checked={form.featured} onChange={set('featured')} className="h-4 w-4 accent-secondary" />Show in Featured Products</label>
               </section>

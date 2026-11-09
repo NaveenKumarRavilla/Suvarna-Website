@@ -5,29 +5,19 @@ import useCart from '../hooks/useCart';
 import { useWishlist } from '../context/WishlistContext';
 import { useAdmin } from '../context/AdminContext';
 import { FALLBACK_IMAGE, formatPrice, handleImgError } from '../utils/helpers';
-
-const normalizeProductId = (id) => String(id ?? '').trim();
-const productIdentity = (product) => [product.name, product.brand, product.category]
-  .map((value) => String(value || '').trim().toLowerCase())
-  .join('|');
-const isAvailable = (product) => ['in stock', 'limited stock'].includes(String(product?.stock || '').toLowerCase());
-const getAvailableCurrentProduct = (savedProduct, productsById) => {
-  const currentProduct = productsById.get(normalizeProductId(savedProduct.id));
-  if (!currentProduct || !isAvailable(currentProduct) || productIdentity(savedProduct) !== productIdentity(currentProduct)) return null;
-  return currentProduct;
-};
+import { getAvailableWishlistProduct, normalizeWishlistProductId } from '../utils/wishlistProducts';
 
 export default function WishlistPage() {
   const { items, removeItem, clearWishlist } = useWishlist();
   const { addItem } = useCart();
   const { storefrontProducts } = useAdmin();
   const [cartNotice, setCartNotice] = useState('');
-  const productsById = new Map(storefrontProducts.map((product) => [normalizeProductId(product.id), product]));
+  const productsById = new Map(storefrontProducts.map((product) => [normalizeWishlistProductId(product.id), product]));
 
   const addAllToCart = () => {
     let added = 0;
     items.forEach((savedProduct) => {
-      const currentProduct = getAvailableCurrentProduct(savedProduct, productsById);
+      const currentProduct = getAvailableWishlistProduct(savedProduct, productsById);
       if (!currentProduct) return;
       addItem(currentProduct, 1);
       removeItem(savedProduct.id);
@@ -83,7 +73,7 @@ export default function WishlistPage() {
       ) : (
         <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {items.map((product) => {
-            const availableProduct = getAvailableCurrentProduct(product, productsById);
+            const availableProduct = getAvailableWishlistProduct(product, productsById);
             return (
             <article key={product.id} className="overflow-hidden rounded-xl bg-white shadow-card">
               <div className="relative">

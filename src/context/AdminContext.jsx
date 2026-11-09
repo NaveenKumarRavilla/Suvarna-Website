@@ -3,9 +3,9 @@ import { products as seedProducts } from '../data/products';
 import { heroSlides as seedBanners, promoCards as seedPromoCards } from '../data/banners';
 import { defaultManagedCategories, normalizeCategoryId } from '../data/categories';
 import { defaultPolicies } from '../data/policies';
-import { addSiteNotification } from '../utils/siteNotifications';
 import { apiRequest } from '../utils/api';
 import { isPublishableProduct } from '../utils/productQuality';
+import { applySharedStoreDraftChoice, rebaseSharedStoreDraft } from '../utils/sharedStoreDraft';
 
 const AdminContext = createContext(null);
 const STORAGE_KEY = 'suvarna_admin_store';
@@ -169,7 +169,9 @@ const loadStore = () => {
       customers: [],
       enquiries: [],
       settings: { ...seedStore().settings, ...(base.settings || {}) },
-      policies: { ...defaultPolicies, ...(base.policies || {}) },
+      policies: Object.hasOwn(base, 'policies') && base.policies && typeof base.policies === 'object'
+        ? base.policies
+        : defaultPolicies,
     };
   } catch {
     return seedStore();
@@ -284,13 +286,17 @@ export function AdminProvider({ children }) {
   const [storefrontReady, setStorefrontReady] = useState(false);
   const [storefrontDataAvailable, setStorefrontDataAvailable] = useState(false);
   const [storefrontError, setStorefrontError] = useState('');
+  const storefrontDataAvailableRef = useRef(false);
+  storefrontDataAvailableRef.current = storefrontDataAvailable;
   const [sharedStoreSaving, setSharedStoreSaving] = useState(false);
   const [sharedStoreError, setSharedStoreError] = useState('');
   const [sharedStoreConflict, setSharedStoreConflict] = useState(false);
+  const [recoveredDraftConflicts, setRecoveredDraftConflicts] = useState([]);
   const [adminFormDirty, setAdminFormDirty] = useState(false);
   const [adminSessionError, setAdminSessionError] = useState('');
   const lastSharedDataRef = useRef('');
   const lastSharedRevisionRef = useRef(0);
+  const lastStorefrontRevisionRef = useRef(0);
   const sharedStoreConflictRef = useRef(false);
   const pendingSharedDataRef = useRef(null);
   const pendingImportIdsRef = useRef(new Map());
@@ -585,12 +591,20 @@ export function AdminProvider({ children }) {
     }
     const requestGeneration = authGenerationRef.current;
     if (currentUserRef.current) return false;
-    const { data } = await apiRequest('storefront-data');
+    const { data, revision } = await apiRequest('storefront-data');
     if (requestGeneration !== authGenerationRef.current || currentUserRef.current) return false;
+    const responseRevision = Number(revision);
+    if (Number.isSafeInteger(responseRevision) && responseRevision < lastStorefrontRevisionRef.current) return false;
+    if (Number.isSafeInteger(responseRevision)) lastStorefrontRevisionRef.current = responseRevision;
     setStorefrontReady(true);
-    setStorefrontDataAvailable(Boolean(data));
-    setStorefrontError(data ? '' : 'Storefront data is not initialized yet. Please try again later.');
-    if (data) setStore((current) => mergeSharedData(current, data));
+    if (data) {
+      setStorefrontDataAvailable(true);
+      setStorefrontError('');
+      setStore((current) => mergeSharedData(current, data));
+    } else if (!storefrontDataAvailableRef.current) {
+      setStorefrontDataAvailable(false);
+      setStorefrontError('Storefront data is not initialized yet. Please try again later.');
+    }
     return Boolean(data);
   };
 
@@ -603,6 +617,7 @@ export function AdminProvider({ children }) {
       setSharedStoreError('Reload the latest shared data and resolve the save conflict before saving.');
       return false;
     }
+    const previousStore = storeRef.current;
     let nextStore;
     try {
       nextStore = updateStore(storeRef.current);
@@ -620,6 +635,13 @@ export function AdminProvider({ children }) {
       await flushSharedStore(snapshot);
       return true;
     } catch {
+      if (storeRef.current === nextStore) {
+        storeRef.current = previousStore;
+        setStore(previousStore);
+        persistStore(previousStore);
+        persistSharedDraft(getSharedData(previousStore));
+        pendingSharedDataRef.current = getSharedData(previousStore);
+      }
       return false;
     }
   };
@@ -675,11 +697,7 @@ export function AdminProvider({ children }) {
           if (!Array.isArray(admins)) throw new Error('The server returned an invalid admin list.');
           setStore((current) => ({ ...current, admins }));
         }
-        const mediaPermissions = ['products', 'banners', 'promo-cards', 'videos', 'offers'];
-        if (
-          session.admin?.master ||
-          session.admin?.permissions?.some((permission) => mediaPermissions.includes(permission))
-        ) {
+        if (session.admin?.master) {
           await apiRequest('admin-media-migrate', { method: 'POST', body: {} });
         }
         const { data, revision = 0 } = await apiRequest('admin-data');
@@ -690,6 +708,7 @@ export function AdminProvider({ children }) {
         if (data) {
           lastSharedDataRef.current = serializeSharedData(data);
           let recoveredData = data;
+          setRecoveredDraftConflicts([]);
           try {
             const draft = JSON.parse(localStorage.getItem(SHARED_DRAFT_STORAGE_KEY) || 'null');
             if (draft?.data) {
@@ -701,14 +720,35 @@ export function AdminProvider({ children }) {
               if (serializeSharedData(draftData) === serverBaseline) {
                 localStorage.removeItem(SHARED_DRAFT_STORAGE_KEY);
               } else {
-                recoveredData = { ...data, ...draftData, orders: data.orders, enquiries: data.enquiries };
-                if (
-                  Number(draft.baseRevision) !== Number(revision) ||
-                  draftBaseline !== serverBaseline
-                ) {
+                if (draftBaseline) {
+                  const rebased = rebaseSharedStoreDraft(
+                    JSON.parse(draftBaseline),
+                    draftData,
+                    JSON.parse(serverBaseline),
+                    SHARED_DATA_KEYS
+                  );
+                  recoveredData = { ...data, ...rebased.data, orders: data.orders, enquiries: data.enquiries };
+                  if (rebased.conflicts.length) {
+                    setRecoveredDraftConflicts(rebased.conflicts);
+                    sharedStoreConflictRef.current = true;
+                    setSharedStoreConflict(true);
+                    setSharedStoreError('Some recovered draft fields conflict with newer server edits. Choose which version to keep before saving.');
+                  }
+                } else {
+                  recoveredData = { ...data, ...draftData, orders: data.orders, enquiries: data.enquiries };
                   sharedStoreConflictRef.current = true;
                   setSharedStoreConflict(true);
-                  setSharedStoreError('Recovered unsaved changes are preserved in this tab, but the server changed since this draft was created. Resolve the save conflict before editing further.');
+                  setSharedStoreError('This older draft has no baseline for a safe merge. Its saved changes are preserved; resolve the conflict before saving.');
+                  const sanitizedServer = JSON.parse(serverBaseline);
+                  setRecoveredDraftConflicts(SHARED_DATA_KEYS
+                    .filter((key) => JSON.stringify(draftData[key]) !== JSON.stringify(sanitizedServer[key]))
+                    .map((key) => ({
+                      id: JSON.stringify([key]),
+                      path: [key],
+                      baseline: undefined,
+                      local: draftData[key],
+                      remote: data[key],
+                    })));
                 }
               }
             }
@@ -759,7 +799,7 @@ export function AdminProvider({ children }) {
       } catch (error) {
         if (active && !currentUserRef.current) {
           setStorefrontReady(true);
-          setStorefrontDataAvailable(false);
+          if (!storefrontDataAvailableRef.current) setStorefrontDataAvailable(false);
           setStorefrontError(error.message);
           console.error('Could not refresh shared storefront data.', error);
         }
@@ -864,6 +904,48 @@ export function AdminProvider({ children }) {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [currentUser, sharedStoreReady, store, sharedStoreSaving, sharedStoreError, adminFormDirty]);
 
+  const resolveRecoveredDraftConflict = (id, choice) => {
+    const conflict = recoveredDraftConflicts.find((item) => item.id === id);
+    if (!conflict || !['local', 'remote'].includes(choice)) return false;
+    const nextData = applySharedStoreDraftChoice(getSharedData(storeRef.current), conflict, choice);
+    const nextStore = mergeSharedData(storeRef.current, nextData);
+    storeRef.current = nextStore;
+    setStore(nextStore);
+    persistStore(nextStore);
+    const remaining = recoveredDraftConflicts.filter((item) => item.id !== id);
+    setRecoveredDraftConflicts(remaining);
+    if (!remaining.length) {
+      sharedStoreConflictRef.current = false;
+      setSharedStoreConflict(false);
+      setSharedStoreError('');
+      persistSharedDraft(getSharedData(nextStore));
+    }
+    return true;
+  };
+
+  const refreshAdminProfile = async () => {
+    try {
+      const session = await apiRequest('admin-session');
+      if (normalizeEmail(session.email) !== normalizeEmail(currentUserRef.current)) {
+        invalidateAdminSession();
+        return false;
+      }
+      if (session.admin) {
+        setStore((current) => ({
+          ...current,
+          admins: [
+            ...current.admins.filter((admin) => normalizeEmail(admin.email) !== normalizeEmail(session.email)),
+            session.admin,
+          ],
+        }));
+      }
+      return true;
+    } catch (error) {
+      if (error.status === 401) invalidateAdminSession();
+      throw error;
+    }
+  };
+
   const value = useMemo(() => {
     const currentAdmin = store.admins.find(
       (admin) => admin.email.toLowerCase() === (currentUser || '').toLowerCase()
@@ -889,11 +971,15 @@ export function AdminProvider({ children }) {
         serializeSharedData(getSharedData(store)) !== lastSharedDataRef.current ||
         sharedStoreSaving ||
         sharedStoreConflict ||
+        recoveredDraftConflicts.length > 0 ||
         adminFormDirty
       ),
       setAdminFormDirty,
       sharedStoreError,
       sharedStoreConflict,
+      recoveredDraftConflicts,
+      resolveRecoveredDraftConflict,
+      refreshAdminProfile,
       adminSessionError,
       isAdmin,
       isMaster,
@@ -1098,24 +1184,6 @@ export function AdminProvider({ children }) {
           return { ok: false, error: error.message, status: error.status };
         }
 
-        addSiteNotification({
-          audience: 'admin',
-          type: 'order',
-          title: 'New order received',
-          summary: `${savedOrder.customer || 'A guest'} placed order #${savedOrder.id}.`,
-          href: '/admin/orders',
-        });
-        if (savedOrder.email) {
-          addSiteNotification({
-            audience: 'customer',
-            recipientEmail: normalizeEmail(savedOrder.email),
-            type: 'order',
-            title: 'Order confirmed',
-            summary: `Order #${savedOrder.id} has been received.`,
-            href: '/account?tab=orders',
-          });
-        }
-
         setStore((s) => {
           const nextOrders = [savedOrder, ...s.orders.filter((item) => item.id !== savedOrder.id)];
           const nextStore = {
@@ -1142,17 +1210,6 @@ export function AdminProvider({ children }) {
           if (currentUserRef.current) await refreshSharedStoreSnapshot(result.revision);
         } catch (error) {
           return { ok: false, error: error.message };
-        }
-
-        if (order.status !== status && updatedOrder.email) {
-          addSiteNotification({
-            audience: 'customer',
-            recipientEmail: normalizeEmail(updatedOrder.email),
-            type: 'order-status',
-            title: `Order ${status.toLowerCase()}`,
-            summary: `Order #${updatedOrder.id} is now ${status.toLowerCase()}.`,
-            href: '/account?tab=orders',
-          });
         }
 
         setStore((s) => {
@@ -1217,15 +1274,6 @@ export function AdminProvider({ children }) {
         try {
           const result = await apiRequest('enquiry-create', { method: 'POST', body: nextEnquiry });
           const savedEnquiry = result.enquiry;
-          if (!result.duplicate) {
-            addSiteNotification({
-              audience: 'admin',
-              type: 'enquiry',
-              title: 'New enquiry received',
-              summary: `New enquiry from ${savedEnquiry.name || 'a guest'}.`,
-              href: '/admin/enquiries',
-            });
-          }
           setStore((s) => ({
             ...s,
             enquiries: [savedEnquiry, ...s.enquiries.filter((item) => item.id !== savedEnquiry.id)],
@@ -1235,13 +1283,36 @@ export function AdminProvider({ children }) {
           return { ok: false, error: error.message };
         }
       },
-      updateEnquiryStatus: (id, status) =>
-        setStore((s) => ({
-          ...s,
-          enquiries: s.enquiries.map((e) => (e.id === id ? { ...e, status } : e)),
-        })),
-      deleteEnquiry: (id) =>
-        setStore((s) => ({ ...s, enquiries: s.enquiries.filter((e) => e.id !== id) })),
+      updateEnquiryStatus: async (id, status) => {
+        const existing = storeRef.current.enquiries.find((enquiry) => String(enquiry.id) === String(id));
+        if (!existing) return { ok: false, error: 'This enquiry is no longer available. Refresh and try again.' };
+        if (existing.status === status) return { ok: true, enquiry: existing };
+        try {
+          const result = await apiRequest('admin-enquiry-status', { method: 'POST', body: { id, status } });
+          const savedEnquiry = result.enquiry;
+          setStore((s) => ({
+            ...s,
+            enquiries: s.enquiries.map((enquiry) => (
+              String(enquiry.id) === String(id) ? savedEnquiry : enquiry
+            )),
+          }));
+          return { ok: true, enquiry: savedEnquiry };
+        } catch (error) {
+          return { ok: false, error: error.message || 'The enquiry status could not be saved.' };
+        }
+      },
+      deleteEnquiry: async (id) => {
+        try {
+          await apiRequest('admin-enquiry-delete', { method: 'POST', body: { id } });
+          setStore((s) => ({
+            ...s,
+            enquiries: s.enquiries.filter((enquiry) => String(enquiry.id) !== String(id)),
+          }));
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: error.message || 'The enquiry could not be deleted.' };
+        }
+      },
 
       settings: store.settings,
       updateSettings: async (patch) => {
@@ -1250,12 +1321,27 @@ export function AdminProvider({ children }) {
       },
 
       policies: store.policies,
-      addPolicy: (id, policy) =>
-        commitSharedMutation((s) => ({ ...s, policies: s.policies[id] ? s.policies : { ...s.policies, [id]: policy } })),
+      addPolicy: async (id, policy) => {
+        if (Object.hasOwn(storeRef.current.policies, id)) {
+          return { ok: false, error: 'A policy with this URL already exists. Choose a different title.' };
+        }
+        const saved = await commitSharedMutation((s) => {
+          if (Object.hasOwn(s.policies, id)) throw new Error('A policy with this URL already exists. Choose a different title.');
+          return { ...s, policies: { ...s.policies, [id]: policy } };
+        });
+        return saved
+          ? { ok: true }
+          : { ok: false, error: Object.hasOwn(storeRef.current.policies, id)
+            ? 'A policy with this URL already exists. Choose a different title.'
+            : 'Policy was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.' };
+      },
       updatePolicy: (id, patch) =>
-        commitSharedMutation((s) => ({ ...s, policies: { ...s.policies, [id]: { ...s.policies[id], ...patch } } })),
+        commitSharedMutation((s) => {
+          if (!Object.hasOwn(s.policies, id)) throw new Error('This policy no longer exists. Reload the latest policy list.');
+          return { ...s, policies: { ...s.policies, [id]: { ...s.policies[id], ...patch } } };
+        }),
       deletePolicy: (id) =>
-        setStore((s) => {
+        commitSharedMutation((s) => {
           const policies = { ...s.policies };
           delete policies[id];
           return { ...s, policies };
@@ -1271,11 +1357,14 @@ export function AdminProvider({ children }) {
     sharedStoreSaving,
     sharedStoreError,
     sharedStoreConflict,
+    recoveredDraftConflicts,
     adminFormDirty,
     adminSessionError,
     getPendingImportIds,
     rememberPendingImportIds,
     clearPendingImportIds,
+    resolveRecoveredDraftConflict,
+    refreshAdminProfile,
   ]);
 
   return <AdminContext.Provider value={value}>{children}</AdminContext.Provider>;

@@ -8,6 +8,35 @@ const statuses = ['New', 'Contacted', 'Closed'];
 export default function AdminEnquiries() {
   const { enquiries, updateEnquiryStatus, deleteEnquiry } = useAdmin();
   const [selectedEnquiry, setSelectedEnquiry] = useState(null);
+  const [pendingIds, setPendingIds] = useState([]);
+  const [error, setError] = useState('');
+
+  const setPending = (id, pending) => {
+    setPendingIds((current) => pending
+      ? [...new Set([...current, String(id)])]
+      : current.filter((value) => value !== String(id)));
+  };
+
+  const changeStatus = async (id, status) => {
+    setPending(id, true);
+    setError('');
+    const result = await updateEnquiryStatus(id, status);
+    setPending(id, false);
+    if (!result.ok) setError(result.error);
+  };
+
+  const removeEnquiry = async (enquiry) => {
+    if (!window.confirm(`Delete the enquiry from ${enquiry.name || 'this customer'}? This cannot be undone.`)) return;
+    setPending(enquiry.id, true);
+    setError('');
+    const result = await deleteEnquiry(enquiry.id);
+    setPending(enquiry.id, false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    if (String(selectedEnquiry?.id) === String(enquiry.id)) setSelectedEnquiry(null);
+  };
 
   return (
     <div>
@@ -15,6 +44,7 @@ export default function AdminEnquiries() {
         title="Manage Enquiries"
         subtitle={`${enquiries.filter((e) => e.status === 'New').length} new enquiries`}
       />
+      {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{error}</p>}
       {enquiries.length === 0 ? (
         <div className="rounded-xl bg-white p-10 text-center shadow-card">
           <p className="text-sm text-slate-500">
@@ -51,7 +81,8 @@ export default function AdminEnquiries() {
                       <StatusBadge status={e.status} />
                       <select
                         value={e.status}
-                        onChange={(ev) => updateEnquiryStatus(e.id, ev.target.value)}
+                        onChange={(ev) => changeStatus(e.id, ev.target.value)}
+                        disabled={pendingIds.includes(String(e.id))}
                         aria-label={`Status of enquiry from ${e.name}`}
                         className={`${inputCls} !w-auto !py-1.5 text-xs font-semibold`}
                       >
@@ -73,9 +104,10 @@ export default function AdminEnquiries() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => deleteEnquiry(e.id)}
+                      onClick={() => removeEnquiry(e)}
+                      disabled={pendingIds.includes(String(e.id))}
                       aria-label={`Delete enquiry from ${e.name}`}
-                      className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                      className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-wait disabled:opacity-50"
                     >
                       <Trash2 size={15} />
                     </button>
