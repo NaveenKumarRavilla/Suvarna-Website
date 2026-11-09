@@ -1613,15 +1613,16 @@ function isPublishableProduct(mixed $product): bool
     $description = trim((string) ($product['description'] ?? ''));
     $specs = $product['specs'] ?? null;
     if ($name === '' || $brand === '' || !is_array($specs)) return false;
-    if (mb_strlen($description) < 20 || strcasecmp($description, $name) === 0) return false;
+    if (function_exists('array_is_list') ? array_is_list($specs) : array_keys($specs) === range(0, count($specs) - 1)) return false;
+    if (mb_strlen($description) < 20 || mb_strtolower($description, 'UTF-8') === mb_strtolower($name, 'UTF-8')) return false;
     $validSpecs = array_filter($specs, static function ($value): bool {
         if (!is_scalar($value)) return false;
         $value = trim((string) $value);
         return $value !== '' && !preg_match('/^(configuration available|available)$/i', $value);
     });
     if (count($validSpecs) < 2) return false;
-    if (strtolower((string) ($product['category'] ?? '')) === 'laptops') {
-        $processor = (string) ($specs['processor'] ?? '');
+    if (strtolower(trim((string) ($product['category'] ?? ''))) === 'laptops') {
+        $processor = is_scalar($specs['processor'] ?? null) ? (string) $specs['processor'] : '';
         if (!preg_match('/intel|amd|ryzen|core|ultra|apple|snapdragon|xeon|mediatek|mtk/i', $processor)) return false;
     }
     return true;

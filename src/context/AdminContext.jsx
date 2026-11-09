@@ -1214,30 +1214,26 @@ export function AdminProvider({ children }) {
           ...enquiry,
         };
 
-        let savedEnquiry;
         try {
           const result = await apiRequest('enquiry-create', { method: 'POST', body: nextEnquiry });
-          savedEnquiry = result.enquiry;
+          const savedEnquiry = result.enquiry;
+          if (!result.duplicate) {
+            addSiteNotification({
+              audience: 'admin',
+              type: 'enquiry',
+              title: 'New enquiry received',
+              summary: `New enquiry from ${savedEnquiry.name || 'a guest'}.`,
+              href: '/admin/enquiries',
+            });
+          }
+          setStore((s) => ({
+            ...s,
+            enquiries: [savedEnquiry, ...s.enquiries.filter((item) => item.id !== savedEnquiry.id)],
+          }));
+          return { ok: true, enquiry: savedEnquiry };
         } catch (error) {
           return { ok: false, error: error.message };
         }
-
-        if (!result.duplicate) {
-          addSiteNotification({
-            audience: 'admin',
-            type: 'enquiry',
-            title: 'New enquiry received',
-            summary: `New enquiry from ${savedEnquiry.name || 'a guest'}.`,
-            href: '/admin/enquiries',
-          });
-        }
-        setStore((s) => {
-          return {
-            ...s,
-            enquiries: [savedEnquiry, ...s.enquiries.filter((item) => item.id !== savedEnquiry.id)],
-          };
-        });
-        return { ok: true, enquiry: savedEnquiry };
       },
       updateEnquiryStatus: (id, status) =>
         setStore((s) => ({

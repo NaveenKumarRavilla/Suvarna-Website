@@ -74,7 +74,6 @@ function cartReducer(state, action) {
                   ...i,
                   id,
                   ...productData,
-                  unavailable: false,
                   identityChanged: false,
                   qty: normalizeQuantity(i.qty + quantity),
                   priceChanged:

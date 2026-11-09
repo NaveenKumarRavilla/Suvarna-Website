@@ -4,7 +4,7 @@ import { Copy, Download, Minus, Pencil, Plus, Search, Trash2, Upload, X } from '
 import { useAdmin } from '../../context/AdminContext';
 import { normalizeCategoryId } from '../../data/categories';
 import { formatPrice } from '../../utils/helpers';
-import { isPublishableProduct } from '../../utils/productQuality';
+import { getProductPublishabilityIssue, isPublishableProduct } from '../../utils/productQuality';
 import { downloadCsv, parseCsv } from '../../utils/csv';
 import { apiRequest } from '../../utils/api';
 import { fingerprintText } from '../../utils/textFingerprint';
@@ -334,13 +334,15 @@ export default function AdminProducts() {
       if (key && item.value.trim()) result[key] = item.value.trim();
       return result;
     }, {});
-    const completeSpecs = Object.values(specs).filter(
-      (value) => !/^(configuration available|available)$/i.test(value)
-    );
-    if (!form.name.trim() || !form.brand.trim() || form.description.trim().length < 20 ||
-        form.description.trim() === form.name.trim() || completeSpecs.length < 2 ||
-        (form.category === 'laptops' && !/intel|amd|ryzen|core|ultra|apple|snapdragon|xeon|mediatek|mtk/i.test(specs.processor || ''))) {
-      setFormError('Add a clear product name, at least two real specifications, and a useful description before saving. Laptops also need a verified processor specification.');
+    const publishabilityIssue = getProductPublishabilityIssue({
+      name: form.name,
+      brand: form.brand,
+      category: form.category,
+      description: form.description,
+      specs,
+    });
+    if (publishabilityIssue) {
+      setFormError(`This product cannot appear in the storefront: ${publishabilityIssue}`);
       return;
     }
     setFormError('');
@@ -498,7 +500,7 @@ export default function AdminProducts() {
 
       {hiddenFromStorefrontCount > 0 && (
         <p role="status" className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          {hiddenFromStorefrontCount} product{hiddenFromStorefrontCount === 1 ? ' is' : 's are'} hidden from customers until complete specifications and a useful description are added. Edit the listed item to publish it.
+          {hiddenFromStorefrontCount} product{hiddenFromStorefrontCount === 1 ? ' is' : 's are'} hidden from customers. The exact reason is shown below each affected product.
         </p>
       )}
 
@@ -600,6 +602,11 @@ export default function AdminProducts() {
                     aria-label={`Product name for ${product.name}`}
                     className={`${inlineInputCls} min-w-[180px] font-semibold text-primary`}
                   />
+                  {getProductPublishabilityIssue(product) && (
+                    <p className="mt-1 max-w-xs text-xs font-medium text-amber-700">
+                      Not visible: {getProductPublishabilityIssue(product)}
+                    </p>
+                  )}
                 </td>
                 <td className={tdCls}>
                   <input

@@ -23,6 +23,7 @@ const Account = lazy(() => import('./pages/Account'));
 const Contact = lazy(() => import('./pages/Contact'));
 const About = lazy(() => import('./pages/About'));
 const Services = lazy(() => import('./pages/Services'));
+const NotFound = lazy(() => import('./pages/NotFound'));
 const PolicyPage = lazy(() => import('./pages/PolicyPage'));
 const AdminLogin = lazy(() => import('./pages/AdminLogin'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
@@ -130,7 +131,7 @@ function ApplicationShell() {
                       <Route path="settings" element={<AdminPermission permission="settings"><AdminSettings /></AdminPermission>} />
                       <Route path="change-password" element={<AdminChangePassword />} />
                     </Route>
-                    <Route path="*" element={<Home />} />
+                    <Route path="*" element={<NotFound />} />
                   </Routes>
                   </Suspense>
         </main>
