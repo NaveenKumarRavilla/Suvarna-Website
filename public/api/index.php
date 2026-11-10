@@ -1333,6 +1333,19 @@ try {
             if (!$result) respond(404, ['error' => 'Order not found.']);
             respond(200, ['order' => $result['order'], 'revision' => $result['revision']]);
 
+        case 'admin-order-void':
+            requireMethod('POST');
+            requireMasterAdmin();
+            $input = readJson();
+            $orderId = cleanText($input['id'] ?? '', 80);
+            $reason = cleanText($input['reason'] ?? '', 500);
+            if ($orderId === '' || mb_strlen($reason, 'UTF-8') < 5) {
+                respond(422, ['error' => 'Order ID and a void reason of at least 5 characters are required.']);
+            }
+            $result = updateSharedOrderStatus($pdo, $orderId, 'Cancelled', $reason);
+            if (!$result) respond(404, ['error' => 'Order not found.']);
+            respond(200, ['order' => $result['order'], 'revision' => $result['revision']]);
+
         case 'admin-enquiry-status':
             requireMethod('POST');
             requireAdmin('enquiries');
@@ -1710,8 +1723,8 @@ function rejectProductsWithActiveReservations(array $currentData, array $newData
         if (!is_array($order)) continue;
         $status = strtolower(cleanText($order['status'] ?? '', 20));
         $reservationState = $order['stockReservationState'] ?? '';
-        $stillNeedsProduct = ($reservationState === 'reserved' && !in_array($status, ['cancelled', 'delivered'], true))
-            || ($reservationState === 'released' && $status === 'cancelled');
+        $stillNeedsProduct = $reservationState === 'reserved'
+            && !in_array($status, ['cancelled', 'delivered'], true);
         if (!$stillNeedsProduct) continue;
         foreach (($order['stockReservations'] ?? []) as $reservation) {
             if (!is_array($reservation)) continue;
@@ -2557,7 +2570,7 @@ function deleteSharedEnquiry(PDO $pdo, string $enquiryId): array|false
     }
 }
 
-function updateSharedOrderStatus(PDO $pdo, string $orderId, string $status): array|false
+function updateSharedOrderStatus(PDO $pdo, string $orderId, string $status, ?string $voidReason = null): array|false
 {
     $pdo->beginTransaction();
     try {
@@ -2577,7 +2590,11 @@ function updateSharedOrderStatus(PDO $pdo, string $orderId, string $status): arr
         foreach ($data['orders'] as &$order) {
             if ((string) ($order['id'] ?? '') === $orderId) {
                 $previousStatus = (string) ($order['status'] ?? '');
-                if ($previousStatus === $status) {
+                if ($voidReason !== null && !empty($order['voidedAt'])) {
+                    $updatedOrder = $order;
+                    break;
+                }
+                if ($previousStatus === $status && $voidReason === null) {
                     $updatedOrder = $order;
                     break;
                 }
@@ -2667,6 +2684,11 @@ function updateSharedOrderStatus(PDO $pdo, string $orderId, string $status): arr
                     }
                 }
                 $order['status'] = $status;
+                if ($voidReason !== null) {
+                    $order['voidedAt'] = gmdate('c');
+                    $order['voidedBy'] = normalizeEmail($_SESSION['admin_email'] ?? '');
+                    $order['voidReason'] = $voidReason;
+                }
                 $updatedOrder = $order;
                 $statusChanged = true;
                 break;

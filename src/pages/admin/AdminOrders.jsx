@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ExternalLink, Search } from 'lucide-react';
+import { Ban, ExternalLink, Search } from 'lucide-react';
 import OrderProductLink from '../../components/common/OrderProductLink';
 import { useAdmin } from '../../context/AdminContext';
 import { FALLBACK_IMAGE, formatPrice, handleImgError } from '../../utils/helpers';
@@ -8,16 +8,18 @@ import { PageHeader, tableWrap, tableCls, thCls, tdCls, inputCls } from '../../c
 const statuses = ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'];
 
 export default function AdminOrders() {
-  const { orders, updateOrderStatus } = useAdmin();
+  const { orders, updateOrderStatus, voidOrder, isMaster } = useAdmin();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [statusError, setStatusError] = useState('');
   const [updatingOrder, setUpdatingOrder] = useState(null);
+  const [showVoided, setShowVoided] = useState(false);
 
   const filteredOrders = useMemo(() => {
     const keyword = search.trim().replace(/^#/, '').toLowerCase();
 
     return orders.filter((o) => {
+      if (o.voidedAt && !showVoided) return false;
       const customer = (o.customer || 'Guest').toLowerCase();
       const mobile = (o.phone || '').toLowerCase();
       const orderId = String(o.id || '').replace(/^#/, '').toLowerCase();
@@ -30,12 +32,27 @@ export default function AdminOrders() {
         || mobile.includes(keyword)
         || status.toLowerCase().includes(keyword));
     });
-  }, [orders, search, statusFilter]);
+  }, [orders, search, statusFilter, showVoided]);
 
   const handleStatusChange = async (id, status) => {
     setUpdatingOrder(id);
     setStatusError('');
     const result = await updateOrderStatus(id, status);
+    setUpdatingOrder(null);
+    if (!result.ok) setStatusError(result.error);
+  };
+
+  const handleVoidOrder = async (order) => {
+    const reason = window.prompt(`Why are you voiding order #${order.id}? A reason is required and will be kept in the audit record.`);
+    if (reason === null) return;
+    if (reason.trim().length < 5) {
+      setStatusError('Enter a void reason with at least 5 characters.');
+      return;
+    }
+    if (!window.confirm(`Void order #${order.id}? If it is not already cancelled, its reserved stock will be restored once.`)) return;
+    setUpdatingOrder(order.id);
+    setStatusError('');
+    const result = await voidOrder(order.id, reason.trim());
     setUpdatingOrder(null);
     if (!result.ok) setStatusError(result.error);
   };
@@ -62,6 +79,7 @@ export default function AdminOrders() {
           <option value="All">All statuses</option>
           {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
         </select>
+        {isMaster && <label className="flex items-center gap-2 px-1 text-sm text-slate-600"><input type="checkbox" checked={showVoided} onChange={(event) => setShowVoided(event.target.checked)} className="h-4 w-4 accent-secondary" />Show voided orders</label>}
         </div>
       </div>
 
@@ -82,6 +100,7 @@ export default function AdminOrders() {
                 <th className={thCls}>Total</th>
                 <th className={thCls}>Date</th>
                 <th className={thCls}>Status</th>
+                {isMaster && <th className={thCls}>Master admin</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -119,10 +138,11 @@ export default function AdminOrders() {
                   <td className={`${tdCls} font-bold`}>{formatPrice(o.total)}</td>
                   <td className={tdCls}>{o.date || '-'}</td>
                   <td className={tdCls}>
+                    {o.voidedAt && <p className="mb-1 rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">Voided: {o.voidReason || 'No reason recorded'}</p>}
                     <select
                       value={o.status || 'Pending'}
                       onChange={(e) => handleStatusChange(o.id, e.target.value)}
-                      disabled={updatingOrder === o.id}
+                      disabled={updatingOrder === o.id || Boolean(o.voidedAt)}
                       aria-label={`Status of order ${o.id}`}
                       className={`${inputCls} !w-auto !py-1.5 text-xs font-semibold`}
                     >
@@ -131,6 +151,7 @@ export default function AdminOrders() {
                       ))}
                     </select>
                   </td>
+                  {isMaster && <td className={tdCls}>{!o.voidedAt && o.status !== 'Delivered' ? <button type="button" onClick={() => handleVoidOrder(o)} disabled={updatingOrder === o.id} className="inline-flex items-center gap-1 rounded border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"><Ban size={13} />{updatingOrder === o.id ? 'Saving…' : 'Void order'}</button> : o.voidedAt ? <span className="text-xs text-slate-500">Voided by {o.voidedBy || 'master admin'}<br />{o.voidedAt}</span> : <span className="text-xs text-slate-400">Delivered</span>}</td>}
                 </tr>
               ))}
             </tbody>

@@ -1116,8 +1116,8 @@ export function AdminProvider({ children }) {
       updateProduct: (id, patch) => saveProductBatch([{ id, product: patch }]),
       deleteProduct: (id) => {
         const reserved = storeRef.current.orders.some((order) =>
-          ((order.stockReservationState === 'reserved' && !['cancelled', 'delivered'].includes(String(order.status || '').toLowerCase())) ||
-            (order.stockReservationState === 'released' && String(order.status || '').toLowerCase() === 'cancelled')) &&
+          order.stockReservationState === 'reserved' &&
+          !['cancelled', 'delivered'].includes(String(order.status || '').toLowerCase()) &&
           (order.stockReservations || []).some((reservation) => String(reservation.productId) === String(id))
         );
         if (reserved) {
@@ -1245,6 +1245,28 @@ export function AdminProvider({ children }) {
           return nextStore;
         });
         return { ok: true };
+      },
+      voidOrder: async (id, reason) => {
+        try {
+          const result = await apiRequest('admin-order-void', {
+            method: 'POST',
+            body: { id, reason },
+          });
+          if (currentUserRef.current) {
+            try { await refreshSharedStoreSnapshot(result.revision); } catch (error) {
+              console.error('Order was voided, but the admin snapshot could not be refreshed.', error);
+            }
+          }
+          setStore((s) => ({
+            ...s,
+            orders: s.orders.map((order) => String(order.id) === String(id)
+              ? { ...order, ...result.order }
+              : order),
+          }));
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: error.message || 'The order could not be voided.' };
+        }
       },
 
       customers: store.customers,
