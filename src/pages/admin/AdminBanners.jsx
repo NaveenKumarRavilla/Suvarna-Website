@@ -62,6 +62,9 @@ const parseBannerCsv = (text) => {
   const ids = new Set();
   return rows.slice(1).map((cells, rowIndex) => {
     const rowNumber = rowIndex + 2;
+    if (cells.length !== headers.length) {
+      throw new Error(`Row ${rowNumber}: expected ${headers.length} columns but found ${cells.length}. No banners were imported.`);
+    }
     const record = Object.fromEntries(headers.map((header, index) => {
       const value = cells[index] || '';
       if (value.trim().startsWith('{') || value.trim().startsWith('[')) {
@@ -102,6 +105,7 @@ export default function AdminBanners() {
   const importInputRef = useRef(null);
   const addSlideButtonRef = useRef(null);
   const restoredDraftRef = useRef(false);
+  const formBaselineRef = useRef(JSON.stringify(emptyForm));
 
   useEffect(() => () => setAdminFormDirty(false), [setAdminFormDirty]);
 
@@ -111,12 +115,17 @@ export default function AdminBanners() {
     try {
       const draft = JSON.parse(localStorage.getItem(BANNER_FORM_DRAFT_KEY) || 'null');
       if (!draft?.form || typeof draft.form !== 'object') return;
+      const recoveredForm = { ...emptyForm, ...draft.form };
+      if (JSON.stringify(recoveredForm) === JSON.stringify(emptyForm)) {
+        localStorage.removeItem(BANNER_FORM_DRAFT_KEY);
+        return;
+      }
       const existing = banners.find((banner) => String(banner.id) === String(draft.editingId));
       setEditing(draft.mode === 'edit' ? existing || null : null);
       setEditBase(draft.mode === 'edit' && existing ? (draft.baseRecord || JSON.stringify(existing)) : null);
       setPendingBannerId(draft.pendingBannerId || null);
       setIsCloning(draft.mode === 'clone');
-      setForm({ ...emptyForm, ...draft.form });
+      setForm(recoveredForm);
       setModalOpen(true);
       setImportError('Recovered an unsaved banner form from this browser.');
       setAdminFormDirty(true);
@@ -128,6 +137,10 @@ export default function AdminBanners() {
   useEffect(() => {
     if (!modalOpen) return;
     try {
+      if (JSON.stringify(form) === formBaselineRef.current) {
+        localStorage.removeItem(BANNER_FORM_DRAFT_KEY);
+        return;
+      }
       localStorage.setItem(BANNER_FORM_DRAFT_KEY, JSON.stringify({
         form,
         editingId: editing?.id ?? null,
@@ -140,22 +153,24 @@ export default function AdminBanners() {
     }
   }, [editBase, editing, form, isCloning, modalOpen, pendingBannerId]);
 
+  useEffect(() => {
+    setAdminFormDirty(Boolean(modalOpen && JSON.stringify(form) !== formBaselineRef.current));
+  }, [form, modalOpen, setAdminFormDirty]);
+
   const openAdd = () => {
+    const nextForm = emptyForm();
+    formBaselineRef.current = JSON.stringify(nextForm);
     setEditing(null);
     setEditBase(null);
     setPendingBannerId(createClientRecordId('BNR'));
     setIsCloning(false);
-    setForm(emptyForm);
+    setForm(nextForm);
     setVideoError('');
     setAdminFormDirty(true);
     setModalOpen(true);
   };
   const openEdit = (b) => {
-    setEditing(b);
-    setEditBase(JSON.stringify(b));
-    setPendingBannerId(null);
-    setIsCloning(false);
-    setForm({
+    const nextForm = {
       badge: b.badge,
       title: b.title,
       subtitle: b.subtitle,
@@ -165,17 +180,19 @@ export default function AdminBanners() {
       video: b.video || '',
       mediaType: b.mediaType || (b.video ? 'video' : 'image'),
       mediaFit: b.mediaFit || 'contain',
-    });
+    };
+    formBaselineRef.current = JSON.stringify(nextForm);
+    setEditing(b);
+    setEditBase(JSON.stringify(b));
+    setPendingBannerId(null);
+    setIsCloning(false);
+    setForm(nextForm);
     setVideoError('');
     setAdminFormDirty(true);
     setModalOpen(true);
   };
   const openClone = (banner) => {
-    setEditing(null);
-    setEditBase(null);
-    setPendingBannerId(createClientRecordId('BNR'));
-    setIsCloning(true);
-    setForm({
+    const nextForm = {
       badge: banner.badge || '',
       title: `Copy of ${banner.title || ''}`,
       subtitle: banner.subtitle || '',
@@ -186,13 +203,19 @@ export default function AdminBanners() {
       mediaType: banner.mediaType || (banner.video ? 'video' : 'image'),
       mediaFit: banner.mediaFit || 'contain',
       gradient: banner.gradient || gradients[0].value,
-    });
+    };
+    formBaselineRef.current = JSON.stringify(nextForm);
+    setEditing(null);
+    setEditBase(null);
+    setPendingBannerId(createClientRecordId('BNR'));
+    setIsCloning(true);
+    setForm(nextForm);
     setVideoError('');
     setAdminFormDirty(true);
     setModalOpen(true);
   };
   const closeModal = (saved = false) => {
-    if (!saved && !window.confirm('Discard this banner form?')) return;
+    if (!saved && JSON.stringify(form) !== formBaselineRef.current && !window.confirm('Discard this banner form?')) return;
     setPendingBannerId(null);
     setModalOpen(false);
     setAdminFormDirty(false);

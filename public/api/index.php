@@ -43,6 +43,7 @@ session_start();
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
+header('X-Suvarna-API-Version: 2026-11-10-customer-login-collation-v2');
 
 $action = $_GET['action'] ?? '';
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -70,6 +71,9 @@ try {
             PDO::ATTR_EMULATE_PREPARES => false,
         ]
     );
+    // Keep SQL literals and bound string parameters on one collation even when
+    // the Hostinger database and existing tables use different defaults.
+    $pdo->exec('SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci');
     ensureSchema($pdo);
 
     switch ($action) {
@@ -590,8 +594,15 @@ try {
             $identifier = cleanText($input['identifier'] ?? '', 160);
             $email = normalizeEmail($identifier);
             $phone = preg_replace('/\D+/', '', $identifier);
-            $statement = $pdo->prepare("SELECT * FROM customers WHERE email = ? OR (? <> '' AND phone_digits = ?) LIMIT 1");
-            $statement->execute([$email, $phone, $phone]);
+            if (filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $statement = $pdo->prepare('SELECT * FROM customers WHERE email = ? LIMIT 1');
+                $statement->execute([$email]);
+            } elseif ($phone !== '') {
+                $statement = $pdo->prepare('SELECT * FROM customers WHERE phone_digits = ? LIMIT 1');
+                $statement->execute([$phone]);
+            } else {
+                respond(401, ['error' => 'Incorrect email/mobile number or password.']);
+            }
             $customer = $statement->fetch();
             if (!$customer || !$customer['password_hash'] || !password_verify((string) ($input['password'] ?? ''), $customer['password_hash'])) {
                 respond(401, ['error' => 'Incorrect email/mobile number or password.']);
@@ -652,6 +663,15 @@ try {
             setCustomerSession($customer);
             respond(200, ['user' => publicCustomer($customer)]);
 
+        case 'customer-password-recovery-validate':
+            requireMethod('POST');
+            $input = readJson();
+            $recoveryToken = cleanText($input['recoveryToken'] ?? '', 128);
+            if (!preg_match('/^[a-f0-9]{64}$/D', $recoveryToken) || !isValidCustomerPasswordRecoveryToken($pdo, $recoveryToken)) {
+                respond(401, ['error' => 'Password recovery request is invalid or has expired. Request a new reset link.']);
+            }
+            respond(200, ['valid' => true]);
+
         case 'customer-set-password':
             requireMethod('POST');
             $input = readJson();
@@ -694,15 +714,27 @@ try {
                 if (!$recent->fetchColumn()) {
                     $token = mintCustomerPasswordRecoveryToken($pdo, $email);
                     $resetUrl = 'https://suvarnaitenterprises.com/forgot-password?token=' . rawurlencode($token);
-                    $fromEmail = normalizeEmail($config['recovery_from_email'] ?? 'noreply@suvarnaitenterprises.com');
-                    $headers = "From: Suvarna IT Enterprises <{$fromEmail}>\r\nContent-Type: text/plain; charset=UTF-8";
+                    $domainSender = 'noreply@suvarnaitenterprises.com';
+                    $fromEmail = normalizeEmail($config['recovery_from_email'] ?? $domainSender);
+                    if (!filter_var($fromEmail, FILTER_VALIDATE_EMAIL) || !str_ends_with($fromEmail, '@suvarnaitenterprises.com')) {
+                        error_log('Password reset sender must be an address on suvarnaitenterprises.com; using the domain fallback.');
+                        $fromEmail = $domainSender;
+                    }
+                    $headers = implode("\r\n", [
+                        "From: Suvarna IT Enterprises <{$fromEmail}>",
+                        "Reply-To: {$fromEmail}",
+                        'MIME-Version: 1.0',
+                        'Content-Type: text/plain; charset=UTF-8',
+                    ]);
                     $sent = mail(
                         $email,
                         'Reset your Suvarna IT Enterprises password',
                         "We received a request to reset your account password. Use this one-time link within 10 minutes:\n\n{$resetUrl}\n\nIf you did not request this, you can ignore this email.",
-                        $headers
+                        $headers,
+                        '-f' . $fromEmail
                     );
-                    if (!$sent) error_log('Customer password recovery email could not be sent.');
+                    if (!$sent) error_log('Customer password recovery mail() returned false; Hostinger did not accept the reset email for delivery.');
+                    else error_log('Customer password recovery message was accepted by the local mail transport; recipient delivery is not confirmed.');
                 }
             }
             respond(200, ['ok' => true]);
@@ -725,7 +757,7 @@ try {
                 $shared['data']['orders'] ?? [],
                 static fn ($order) => normalizeEmail($order['email'] ?? '') === $email
             )) : [];
-            respond(200, ['orders' => $orders]);
+            respond(200, ['orders' => array_map('customerOrderView', $orders)]);
 
         case 'product-reviews':
             requireMethod('GET');
@@ -827,17 +859,20 @@ try {
             $name = cleanText($input['name'] ?? $existingCustomer['name'], 160);
             $phone = cleanText($input['phone'] ?? $existingCustomer['phone'], 40);
             if ($name === '') respond(422, ['error' => 'Name is required.']);
+            $phoneDigits = preg_replace('/\D+/', '', $phone);
+            if ($phone !== '' && (!preg_match('/^[+0-9 ().-]+$/D', $phone) || strlen($phoneDigits) < 10 || strlen($phoneDigits) > 15)) {
+                respond(422, ['error' => 'Enter a valid phone number with 10 to 15 digits.']);
+            }
             if ($phone !== '') {
-                $phoneDigits = preg_replace('/\D+/', '', $phone);
-                $statement = $pdo->prepare('SELECT id FROM customers WHERE phone_digits = ? AND email <> ? LIMIT 1');
-                $statement->execute([$phoneDigits, $email]);
+                $statement = $pdo->prepare('SELECT id FROM customers WHERE phone_digits = ? AND id <> ? LIMIT 1');
+                $statement->execute([$phoneDigits, $existingCustomer['id']]);
                 if ($statement->fetch()) respond(409, ['error' => 'This mobile number is already linked to another account.']);
             }
             $statement = $pdo->prepare('UPDATE customers SET name = ?, phone = ?, phone_digits = ?, address = ?, city = ?, pin = ?, addresses = ? WHERE email = ?');
             $statement->execute([
                 $name,
-                $phone,
-                preg_replace('/\D+/', '', $phone),
+                $phone === '' ? '' : $phoneDigits,
+                $phone === '' ? '' : $phoneDigits,
                 cleanText($input['address'] ?? $existingCustomer['address'], 500),
                 cleanText($input['city'] ?? $existingCustomer['city'], 120),
                 cleanText($input['pin'] ?? $existingCustomer['pin'], 20),
@@ -1098,7 +1133,7 @@ try {
             $created = 0;
             $updated = 0;
             $emailLookup = $pdo->prepare('SELECT id FROM customers WHERE email = ? LIMIT 1');
-            $phoneLookup = $pdo->prepare('SELECT id FROM customers WHERE phone_digits = ? AND email <> ? LIMIT 1');
+            $phoneLookup = $pdo->prepare('SELECT id, email FROM customers WHERE phone_digits = ? LIMIT 1');
             $updateCustomer = $pdo->prepare('UPDATE customers SET name = ?, phone = ?, phone_digits = ?, address = ?, city = ?, pin = ? WHERE id = ?');
             $insertCustomer = $pdo->prepare(
                 "INSERT INTO customers (email, name, phone, phone_digits, password_hash, provider, providers, address, city, pin, addresses, joined_at)
@@ -1114,7 +1149,8 @@ try {
                 $phoneDigits = $profile['phone_digits'] ?? '';
                 if ($phoneDigits !== '') {
                     $phoneLookup->execute([$phoneDigits, $profile['email']]);
-                    if ($phoneLookup->fetchColumn()) {
+                    $phoneOwner = $phoneLookup->fetch();
+                    if ($phoneOwner && normalizeEmail($phoneOwner['email'] ?? '') !== normalizeEmail($profile['email'])) {
                         $pdo->rollBack();
                         respond(409, ['error' => 'A phone number in this import is already linked to another customer account.']);
                     }
@@ -1279,7 +1315,7 @@ try {
             $input = readJson();
             $result = createOrderIdempotently($pdo, $input);
             respond($result['duplicate'] ? 200 : 201, [
-                'order' => $result['order'],
+                'order' => customerOrderView($result['order']),
                 'duplicate' => $result['duplicate'],
                 'revision' => $result['revision'],
             ]);
@@ -1337,6 +1373,11 @@ try {
                 respond(422, ['error' => 'Name and message are required.']);
             }
             $phone = cleanText($input['phone'] ?? '', 40);
+            $phoneDigits = preg_replace('/\D+/', '', $phone);
+            if (!preg_match('/^[+0-9 ().-]+$/D', $phone) || strlen($phoneDigits) < 10 || strlen($phoneDigits) > 15) {
+                respond(422, ['error' => 'Enter a valid phone number with 10 to 15 digits.']);
+            }
+            $phone = $phoneDigits;
             $subject = cleanText($input['subject'] ?? '', 200);
             $requestHash = hash('sha256', json_encode([
                 'name' => $name,
@@ -1374,7 +1415,8 @@ try {
 } catch (ApiException $error) {
     respond($error->status, ['error' => $error->getMessage()]);
 } catch (Throwable $error) {
-    error_log('Suvarna API error: ' . $error->getMessage());
+    $safeAction = preg_replace('/[^a-z0-9_-]/i', '', (string) $action);
+    error_log('Suvarna API error [action=' . $safeAction . ']: ' . $error->getMessage());
     respond(500, ['error' => 'The server could not complete this request. Check the Hostinger PHP error log.']);
 }
 
@@ -1779,6 +1821,19 @@ function mintCustomerPasswordRecoveryToken(PDO $pdo, string $email): string
     return $token;
 }
 
+function isValidCustomerPasswordRecoveryToken(PDO $pdo, string $token): bool
+{
+    $statement = $pdo->prepare(
+        'SELECT customers.email
+         FROM customer_password_recovery_tokens AS tokens
+         INNER JOIN customers ON customers.email = tokens.email
+         WHERE tokens.token_hash = ? AND tokens.consumed_at IS NULL AND tokens.expires_at > CURRENT_TIMESTAMP
+         LIMIT 1'
+    );
+    $statement->execute([hash('sha256', $token)]);
+    return $statement->fetchColumn() !== false;
+}
+
 function consumeCustomerPasswordRecoveryToken(PDO $pdo, string $token, string $password): void
 {
     $pdo->beginTransaction();
@@ -1860,17 +1915,21 @@ function getSharedStore(PDO $pdo): array|false
 function productSnapshotMatches(array $snapshot, array $product): bool
 {
     $currentId = cleanText($product['id'] ?? '', 80);
-    foreach (['productId', 'id'] as $identifierField) {
-        $snapshotId = cleanText($snapshot[$identifierField] ?? '', 80);
-        if ($snapshotId !== '') return $currentId !== '' && hash_equals($currentId, $snapshotId);
+    $savedProductUid = cleanText($snapshot['productUid'] ?? '', 80);
+    if ($savedProductUid !== '') {
+        $currentProductUid = cleanText($product['productUid'] ?? '', 80);
+        return $currentProductUid !== '' && hash_equals($currentProductUid, $savedProductUid);
     }
 
+    $savedId = cleanText($snapshot['productId'] ?? $snapshot['id'] ?? '', 80);
+    if ($savedId === '' || $currentId === '' || !hash_equals($currentId, $savedId)) return false;
     $savedName = strtolower(trim((string) ($snapshot['name'] ?? '')));
     $currentName = strtolower(trim((string) ($product['name'] ?? '')));
     if ($savedName === '' || $currentName === '' || $savedName !== $currentName) return false;
     foreach (['brand', 'category'] as $field) {
         $saved = strtolower(trim((string) ($snapshot[$field] ?? '')));
-        if ($saved !== '' && $saved !== strtolower(trim((string) ($product[$field] ?? '')))) return false;
+        $current = strtolower(trim((string) ($product[$field] ?? '')));
+        if ($saved === '' || $current === '' || $saved !== $current) return false;
     }
     return true;
 }
@@ -2256,12 +2315,19 @@ function createOrderIdempotently(PDO $pdo, array $input): array
             }
 
             $subtotalPaise += $pricePaise * $requestedItem['qty'];
+            $productUid = cleanText($product['productUid'] ?? '', 80);
+            if ($productUid === '') {
+                $productUid = 'PU' . strtoupper(bin2hex(random_bytes(16)));
+                $data['products'][$productIndex]['productUid'] = $productUid;
+                $product['productUid'] = $productUid;
+            }
             $images = $product['images'] ?? [];
             $image = $product['image'] ?? (is_array($images) ? ($images[0] ?? '') : '');
             $oldPrice = $product['oldPrice'] ?? $catalogPrice;
             $normalizedItems[] = [
                 'id' => $requestedItem['id'],
                 'productId' => $requestedItem['id'],
+                'productUid' => $productUid,
                 'name' => cleanText($product['name'] ?? 'Product', 200),
                 'qty' => $requestedItem['qty'],
                 'price' => round($pricePaise / 100, 2),
@@ -2734,6 +2800,29 @@ function publicCustomer(array $customer): array
         'joined' => $customer['joined_at'] ?? '',
         'orders' => isset($customer['orders']) ? (int) $customer['orders'] : null,
     ];
+}
+
+function customerOrderView(mixed $order): array
+{
+    if (!is_array($order)) return [];
+    $items = [];
+    foreach (($order['items'] ?? []) as $item) {
+        if (!is_array($item)) continue;
+        $items[] = array_intersect_key($item, array_flip([
+            'id', 'name', 'brand', 'category', 'qty', 'price', 'oldPrice', 'image', 'stock',
+        ]));
+    }
+    $view = array_intersect_key($order, array_flip([
+        'id', 'customer', 'phone', 'email', 'total', 'payment', 'shippingAddress', 'date', 'status', 'sellerSnapshot',
+    ]));
+    $view['items'] = $items;
+    $view['shippingAddress'] = is_array($view['shippingAddress'] ?? null)
+        ? array_intersect_key($view['shippingAddress'], array_flip(['address', 'city', 'pin']))
+        : [];
+    $view['sellerSnapshot'] = is_array($view['sellerSnapshot'] ?? null)
+        ? array_intersect_key($view['sellerSnapshot'], array_flip(['storeName', 'businessName', 'email', 'phone', 'whatsapp', 'address']))
+        : [];
+    return $view;
 }
 
 function setCustomerSession(array $customer): void

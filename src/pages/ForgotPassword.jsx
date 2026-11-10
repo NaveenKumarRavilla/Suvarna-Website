@@ -12,7 +12,7 @@ const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 export default function ForgotPassword() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { loginWithGoogle, setPasswordForRecovery, requestPasswordRecovery, googleReady, googleLoadError } = useAuth();
+  const { loginWithGoogle, validatePasswordRecovery, setPasswordForRecovery, requestPasswordRecovery, googleReady, googleLoadError } = useAuth();
   const [email, setEmail] = useState(searchParams.get('email') || '');
   const [verifiedEmail, setVerifiedEmail] = useState('');
   const [recoveryToken, setRecoveryToken] = useState('');
@@ -23,13 +23,29 @@ export default function ForgotPassword() {
   const [saving, setSaving] = useState(false);
   const [emailLoading, setEmailLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  const [tokenLoading, setTokenLoading] = useState(false);
 
   useEffect(() => {
     const token = searchParams.get('token');
     if (!token) return;
-    setRecoveryToken(token);
-    setVerifiedEmail('your email');
-  }, [searchParams]);
+    let active = true;
+    setTokenLoading(true);
+    setError('');
+    validatePasswordRecovery(token).then((result) => {
+      if (!active) return;
+      if (result.ok) {
+        setRecoveryToken(token);
+        setVerifiedEmail('your email');
+      } else {
+        setRecoveryToken('');
+        setVerifiedEmail('');
+        setError(result.error || 'This password reset link is invalid or has expired. Request a new link.');
+      }
+    }).finally(() => {
+      if (active) setTokenLoading(false);
+    });
+    return () => { active = false; };
+  }, [searchParams, validatePasswordRecovery]);
 
   const handleGoogleVerification = async () => {
     const requestedEmail = normalizeEmail(email);
@@ -105,7 +121,9 @@ export default function ForgotPassword() {
           </p>
         </div>
 
-        {!verifiedEmail ? (
+        {tokenLoading ? (
+          <p role="status" className="mt-7 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700">Checking your password reset link…</p>
+        ) : !verifiedEmail ? (
           <div className="mt-7 space-y-4">
             <div>
               <label htmlFor="recovery-email" className="mb-1.5 block text-xs font-semibold text-slate-600">

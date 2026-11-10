@@ -85,6 +85,13 @@ export default function Contact() {
       subject: form.querySelector('#ct-subject')?.value || '',
       message: form.querySelector('#ct-message')?.value || '',
     };
+    const normalizedPhone = enquiry.phone.trim();
+    const phoneDigits = normalizedPhone.replace(/\D/g, '');
+    if (!/^[+0-9 ().-]+$/.test(normalizedPhone) || phoneDigits.length < 10 || phoneDigits.length > 15) {
+      setError('Enter a valid phone number with 10 to 15 digits.');
+      form.querySelector('#ct-phone')?.focus();
+      return;
+    }
     const fingerprint = JSON.stringify(enquiry);
     if (enquiryRequestRef.current.fingerprint !== fingerprint) {
       enquiryRequestRef.current = {
@@ -196,7 +203,7 @@ export default function Contact() {
                 <label htmlFor="ct-phone" className="mb-1.5 block text-xs font-semibold text-slate-600">
                   Phone *
                 </label>
-                <input id="ct-phone" type="tel" required className={inputCls} placeholder="+91 98765 43210" />
+                <input id="ct-phone" type="tel" required pattern="[+]?[0-9 ().-]+" title="Enter a valid phone number with 10 to 15 digits." className={inputCls} placeholder="+91 98765 43210" />
               </div>
               <div>
                 <label htmlFor="ct-subject" className="mb-1.5 block text-xs font-semibold text-slate-600">

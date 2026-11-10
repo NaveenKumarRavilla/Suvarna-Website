@@ -200,6 +200,19 @@ export function AuthProvider({ children }) {
         }
       },
 
+      validatePasswordRecovery: async (recoveryToken) => {
+        if (!recoveryToken) return { ok: false, error: 'This password reset link is invalid or has expired. Request a new link.' };
+        try {
+          await apiRequest('customer-password-recovery-validate', {
+            method: 'POST',
+            body: { recoveryToken },
+          });
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, error: error.message, status: error.status };
+        }
+      },
+
       requestPasswordRecovery: async (email) => {
         try {
           await apiRequest('customer-password-recovery-request', {

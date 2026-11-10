@@ -275,7 +275,14 @@ export default function Account() {
   const handleProfileSave = async (e) => {
     e.preventDefault();
     const form = e.currentTarget;
-    const result = await updateProfile({ name: form.name.value, phone: form.phone.value });
+    const phone = form.phone.value.trim();
+    const phoneDigits = phone.replace(/\D/g, '');
+    if (phone && (!/^[+0-9 ().-]+$/.test(phone) || phoneDigits.length < 10 || phoneDigits.length > 15)) {
+      setProfileError('Enter a valid phone number with 10 to 15 digits.');
+      form.phone.focus();
+      return;
+    }
+    const result = await updateProfile({ name: form.name.value, phone });
     if (result.status === 409) setMyOrders([]);
     setProfileError(result.ok ? '' : result.error);
     setSaved(result.ok);
@@ -423,7 +430,7 @@ export default function Account() {
                 </div>
                 <div>
                   <label htmlFor="ac-phone" className={labelCls}>Mobile Number</label>
-                  <input id="ac-phone" name="phone" type="tel" defaultValue={user.phone} className={inputCls} />
+                  <input id="ac-phone" name="phone" type="tel" pattern="[+]?[0-9 ().-]*" title="Leave blank or enter a valid phone number with 10 to 15 digits." defaultValue={user.phone} className={inputCls} />
                 </div>
                 <div>
                   <label htmlFor="ac-email" className={labelCls}>Email (cannot be changed)</label>

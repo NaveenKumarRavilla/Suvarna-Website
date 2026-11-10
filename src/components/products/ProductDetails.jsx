@@ -67,6 +67,7 @@ export default function ProductDetails({ product, related }) {
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewComment, setReviewComment] = useState('');
   const [reviewError, setReviewError] = useState('');
+  const [cartError, setCartError] = useState('');
   const [reviewMessage, setReviewMessage] = useState('');
   const [reviewLoading, setReviewLoading] = useState(false);
   const wishlisted = isWishlisted(product.id);
@@ -130,6 +131,10 @@ export default function ProductDetails({ product, related }) {
     (product.stockQuantity != null && Number(product.stockQuantity) <= 0) ||
     (stockStatus === 'limited stock' &&
       (!Number.isInteger(Number(product.stockQuantity)) || Number(product.stockQuantity) < 1));
+  const maxPurchasable = product.stockQuantity == null
+    ? 10
+    : Math.max(0, Math.min(10, Number(product.stockQuantity) || 0));
+  const quantityLimitReached = maxPurchasable > 0 && qty >= maxPurchasable;
   const highlights = [
     product.specs.processor,
     product.specs.ram,
@@ -139,6 +144,7 @@ export default function ProductDetails({ product, related }) {
 
   const handleBuyNow = () => {
     if (addItem(product, qty)) navigate('/checkout');
+    else setCartError(`Only ${maxPurchasable} ${maxPurchasable === 1 ? 'unit' : 'units'} available.`);
   };
 
   const showPrevImage = () => {
@@ -351,17 +357,21 @@ export default function ProductDetails({ product, related }) {
                 </span>
                 <button
                   type="button"
-                  onClick={() => setQty((q) => Math.min(10, q + 1))}
+                  onClick={() => setQty((q) => Math.min(maxPurchasable || 10, q + 1))}
                   aria-label="Increase quantity"
                   className="p-2.5 text-slate-600 transition hover:text-secondary disabled:opacity-40"
-                  disabled={qty >= 10}
+                  disabled={qty >= Math.max(1, maxPurchasable)}
                 >
                   <Plus size={16} />
                 </button>
               </div>
+              {quantityLimitReached && <p role="status" className="w-full text-xs font-medium text-amber-700">Only {maxPurchasable} {maxPurchasable === 1 ? 'unit' : 'units'} available.</p>}
               <button
                 type="button"
-                onClick={() => addItem(product, qty)}
+                onClick={() => {
+                  if (!addItem(product, qty)) setCartError(`Only ${maxPurchasable} ${maxPurchasable === 1 ? 'unit' : 'units'} available.`);
+                  else setCartError('');
+                }}
                 disabled={outOfStock}
                 className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-primary px-4 py-2.5 text-sm font-semibold text-primary transition hover:bg-primary hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
@@ -378,6 +388,7 @@ export default function ProductDetails({ product, related }) {
                 Add and go to checkout
               </button>
             </div>
+            {cartError && <p role="alert" className="mt-2 text-xs font-medium text-red-600">{cartError}</p>}
             <div className="mt-3 flex gap-3">
               <a
                 href={productEnquiryLink(product)}
@@ -393,7 +404,7 @@ export default function ProductDetails({ product, related }) {
             <div className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-4 text-xs text-slate-500">
               <span className="flex items-center gap-2">
                 <Truck size={16} className="text-secondary" />
-                Free delivery above {formatPrice(FREE_DELIVERY_THRESHOLD)}
+                Free delivery on orders of {formatPrice(FREE_DELIVERY_THRESHOLD)} or more
               </span>
               <span className="flex items-center gap-2">
                 <ShieldCheck size={16} className="text-secondary" />

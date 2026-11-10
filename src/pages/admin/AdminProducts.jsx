@@ -80,6 +80,9 @@ const parseProductCsv = (text) => {
   const seenIds = new Set();
   return rows.slice(1).map((cells, rowIndex) => {
     const rowNumber = rowIndex + 2;
+    if (cells.length !== headers.length) {
+      throw new Error(`Row ${rowNumber}: expected ${headers.length} columns but found ${cells.length}. No products were imported.`);
+    }
     const record = Object.fromEntries(headers.map((header, index) => [header, cells[index] || '']));
     const id = (record.id || '').trim();
     if (id && seenIds.has(id)) throw new Error(`Row ${rowNumber}: product ID "${id}" appears more than once in the CSV.`);
@@ -350,6 +353,11 @@ export default function AdminProducts() {
     try {
       const draft = JSON.parse(localStorage.getItem(PRODUCT_FORM_DRAFT_KEY) || 'null');
       if (!draft?.form || !Array.isArray(draft.form.images) || !Array.isArray(draft.form.configuration)) return;
+      const recoveredForm = { ...emptyForm(), ...draft.form };
+      if (JSON.stringify(recoveredForm) === JSON.stringify(emptyForm())) {
+        localStorage.removeItem(PRODUCT_FORM_DRAFT_KEY);
+        return;
+      }
       const existing = products.find((product) => String(product.id) === String(draft.editingId));
       const isEditing = draft.mode === 'edit' && !!existing;
       setEditing(isEditing ? existing : null);
@@ -357,7 +365,7 @@ export default function AdminProducts() {
       setPendingCreateId(draft.pendingCreateId || null);
       setFormMode(isEditing ? 'edit' : draft.mode === 'clone' ? 'clone' : 'add');
       setFormSession((session) => session + 1);
-      setForm({ ...emptyForm(), ...draft.form });
+      setForm(recoveredForm);
       initialFormRef.current = JSON.stringify(emptyForm());
       setFormError('Recovered an unsaved product form from this browser.');
       setFormOpen(true);
@@ -370,6 +378,10 @@ export default function AdminProducts() {
   useEffect(() => {
     if (!formOpen) return;
     try {
+      if (JSON.stringify(form) === initialFormRef.current) {
+        localStorage.removeItem(PRODUCT_FORM_DRAFT_KEY);
+        return;
+      }
       localStorage.setItem(PRODUCT_FORM_DRAFT_KEY, JSON.stringify({
         form,
         editingId: editing?.id ?? null,
@@ -384,9 +396,13 @@ export default function AdminProducts() {
 
   useEffect(() => () => setAdminFormDirty(false), [setAdminFormDirty]);
 
+  useEffect(() => {
+    setAdminFormDirty(Boolean(formOpen && JSON.stringify(form) !== initialFormRef.current));
+  }, [form, formOpen, setAdminFormDirty]);
+
   const closeForm = (saved = false) => {
     if (uploadingProductImageRef.current) return;
-    if (!saved && !window.confirm('Discard this product form?')) return;
+    if (!saved && JSON.stringify(form) !== initialFormRef.current && !window.confirm('Discard this product form?')) return;
     setEditing(null);
     setEditBase(null);
     setPendingCreateId(null);
@@ -758,23 +774,35 @@ export default function AdminProducts() {
       )}
 
       <div className={tableWrap}>
-        <table className={`${tableCls} min-w-[760px]`}>
+        <table className={`${tableCls} w-full !min-w-0 table-fixed`}>
+          <colgroup>
+            <col style={{ width: '7%' }} />
+            <col style={{ width: '9%' }} />
+            <col style={{ width: '21%' }} />
+            <col style={{ width: '9%' }} />
+            <col style={{ width: '7%' }} />
+            <col style={{ width: '20%' }} />
+            <col style={{ width: '18%' }} />
+            <col style={{ width: '9%' }} />
+          </colgroup>
           <thead className="border-b border-slate-100 bg-slate-50">
             <tr>
-              <th className={thCls}>Category</th>
-              <th className={thCls}>Product Name</th>
-              <th className={thCls}>Price</th>
-              <th className={thCls}>Featured</th>
-              <th className={thCls}>Warranty</th>
-              <th className={thCls}>Stock Status</th>
-              <th className={thCls}><span className="sr-only">Actions</span></th>
+              <th className={`${thCls} !px-1`}>Product ID</th>
+              <th className={`${thCls} !px-1`}>Category</th>
+              <th className={`${thCls} !px-2`}>Product Name</th>
+              <th className={`${thCls} !px-2`}>Price</th>
+              <th className={`${thCls} !px-2`}>Featured</th>
+              <th className={`${thCls} !px-2`}>Warranty</th>
+              <th className={`${thCls} !px-2`}>Stock Status</th>
+              <th className={`${thCls} !px-1`}><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {displayedProducts.map((product) => (
               <tr key={product.id} className="align-top transition hover:bg-slate-50">
-                <td className={`${tdCls} capitalize`}>{product.category}</td>
-                <td className={tdCls}>
+                <td className={`${tdCls} break-all !px-1 font-mono text-[10px] leading-4 text-slate-500`}>{product.id}</td>
+                <td className={`${tdCls} break-words !px-1 text-xs capitalize`}>{product.category}</td>
+                <td className={`${tdCls} px-2`}>
                   <input
                     defaultValue={product.name}
                     onBlur={(event) => {
@@ -783,7 +811,7 @@ export default function AdminProducts() {
                     }}
                     onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
                     aria-label={`Product name for ${product.name}`}
-                    className={`${inlineInputCls} min-w-[180px] font-semibold text-primary`}
+                    className={`${inlineInputCls} min-w-0 px-2 text-xs font-semibold text-primary`}
                   />
                   {getProductPublishabilityIssue(product, products) && (
                     <p className="mt-1 max-w-xs text-xs font-medium text-amber-700">
@@ -791,7 +819,7 @@ export default function AdminProducts() {
                     </p>
                   )}
                 </td>
-                <td className={tdCls}>
+                <td className={`${tdCls} px-2`}>
                   <input
                     type="number"
                     min="1"
@@ -802,12 +830,12 @@ export default function AdminProducts() {
                     }}
                     onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
                     aria-label={`Price for ${product.name}`}
-                    className={`${inlineInputCls} min-w-[100px] font-semibold`}
+                    className={`${inlineInputCls} min-w-0 px-2 text-xs font-semibold`}
                   />
                   {product.oldPrice > product.price && <span className="mt-1 block text-xs text-slate-400 line-through">{formatPrice(product.oldPrice)}</span>}
                 </td>
-                <td className={tdCls}><input type="checkbox" checked={!!product.featured} onChange={(event) => updateProduct(product.id, { featured: event.target.checked })} aria-label={`Toggle featured for ${product.name}`} className="h-4 w-4 accent-secondary" /></td>
-                <td className={tdCls}>
+                <td className={`${tdCls} px-2 text-center`}><input type="checkbox" checked={!!product.featured} onChange={(event) => updateProduct(product.id, { featured: event.target.checked })} aria-label={`Toggle featured for ${product.name}`} className="h-4 w-4 accent-secondary" /></td>
+                <td className={`${tdCls} px-2`}>
                   <input
                     defaultValue={product.warranty || 'Standard Warranty'}
                     onBlur={(event) => {
@@ -816,15 +844,15 @@ export default function AdminProducts() {
                     }}
                     onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
                     aria-label={`Warranty for ${product.name}`}
-                    className={`${inlineInputCls} min-w-[150px] text-xs`}
+                    className={`${inlineInputCls} min-w-0 px-2 text-[10px]`}
                   />
                 </td>
-                <td className={tdCls}>
-                  <select value={normalizeStockStatus(product.stock) || 'In Stock'} onChange={(event) => handleQuickStockChange(product, event.target.value)} aria-label={`Stock status for ${product.name}`} className={`${inlineInputCls} min-w-[140px] text-xs`}>
+                <td className={`${tdCls} px-2`}>
+                  <select value={normalizeStockStatus(product.stock) || 'In Stock'} onChange={(event) => handleQuickStockChange(product, event.target.value)} aria-label={`Stock status for ${product.name}`} className={`${inlineInputCls} min-w-0 px-1 text-[10px]`}>
                     {stockOptions.map((status) => <option key={status}>{status}</option>)}
                   </select>
                 </td>
-                <td className={tdCls}><span className="flex gap-1"><button type="button" onClick={() => openEdit(product)} disabled={uploadingProductImage} aria-label={`Edit ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary disabled:cursor-not-allowed disabled:opacity-50"><Pencil size={15} /></button><button type="button" onClick={() => openEdit(product, true)} disabled={uploadingProductImage} aria-label={`Clone ${product.name}`} title="Clone product" className="rounded-lg p-2 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary disabled:cursor-not-allowed disabled:opacity-50"><Copy size={15} /></button><button type="button" onClick={async () => { if (!window.confirm(`Delete ${product.name}?`)) return; const deleted = await deleteProduct(product.id); if (!deleted) window.alert('Product was not deleted. It may be reserved by an order, or the database save failed.'); }} aria-label={`Delete ${product.name}`} className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></button></span></td>
+                <td className={`${tdCls} px-1`}><span className="flex justify-center gap-0.5"><button type="button" onClick={() => openEdit(product)} disabled={uploadingProductImage} aria-label={`Edit ${product.name}`} className="rounded p-1 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary disabled:cursor-not-allowed disabled:opacity-50"><Pencil size={13} /></button><button type="button" onClick={() => openEdit(product, true)} disabled={uploadingProductImage} aria-label={`Clone ${product.name}`} title="Clone product" className="rounded p-1 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary disabled:cursor-not-allowed disabled:opacity-50"><Copy size={13} /></button><button type="button" onClick={async () => { if (!window.confirm(`Delete ${product.name}?`)) return; const deleted = await deleteProduct(product.id); if (!deleted) window.alert('Product was not deleted. It may be reserved by an order, or the database save failed.'); }} aria-label={`Delete ${product.name}`} className="rounded p-1 text-slate-400 transition hover:bg-red-50 hover:text-red-600"><Trash2 size={13} /></button></span></td>
               </tr>
             ))}
           </tbody>

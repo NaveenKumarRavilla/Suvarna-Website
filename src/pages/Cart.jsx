@@ -121,7 +121,7 @@ export default function Cart() {
                   </span>
                   <button
                     type="button"
-                    disabled={item.qty >= 10}
+                    disabled={item.qty >= (item.stockQuantity == null ? 10 : Math.min(10, Math.max(0, item.stockQuantity)))}
                     onClick={() => updateQty(item.id, item.qty + 1)}
                     aria-label={`Increase quantity of ${item.name}`}
                     className="p-2 text-slate-600 transition hover:text-secondary disabled:cursor-not-allowed disabled:opacity-40"
@@ -129,6 +129,7 @@ export default function Cart() {
                     <Plus size={14} />
                   </button>
                 </div>
+                {item.stockQuantity != null && item.qty >= item.stockQuantity && item.stockQuantity > 0 && <p role="status" className="text-xs font-medium text-amber-700">Only {item.stockQuantity} {item.stockQuantity === 1 ? 'unit' : 'units'} available.</p>}
                 <div className="flex items-center gap-3">
                   <span className="text-sm font-bold text-primary">
                     {formatPrice(item.price * item.qty)}

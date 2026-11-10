@@ -45,7 +45,7 @@ export default function PolicyPage({ slug: fixedSlug }) {
               <h2 className="text-base font-bold text-primary">{heading}</h2>
               <p className="mt-2 text-sm leading-relaxed text-slate-600">
                 {policySlug === 'shipping' && heading.toLowerCase() === 'shipping charges'
-                  ? `Standard delivery is ${DELIVERY_FEE.toLocaleString('en-IN')} for orders below ₹${FREE_DELIVERY_THRESHOLD.toLocaleString('en-IN')}. Delivery is free for orders of ₹${FREE_DELIVERY_THRESHOLD.toLocaleString('en-IN')} or more. The checkout total displays the applicable charge before you place your order.`
+                  ? `Standard delivery is ₹${DELIVERY_FEE.toLocaleString('en-IN')} for orders below ₹${FREE_DELIVERY_THRESHOLD.toLocaleString('en-IN')}. Delivery is free for orders of ₹${FREE_DELIVERY_THRESHOLD.toLocaleString('en-IN')} or more. The checkout total displays the applicable charge before you place your order.`
                   : text}
               </p>
             </section>
