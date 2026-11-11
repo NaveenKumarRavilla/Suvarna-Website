@@ -1,15 +1,16 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ShieldCheck, Cpu, KeyRound, UserPlus, Trash2, Crown, LayoutDashboard, Store, Mail } from 'lucide-react';
-import { ADMIN_PERMISSIONS, MASTER_ADMIN, useAdmin } from '../context/AdminContext';
+import { ADMIN_PERMISSIONS, useAdmin } from '../context/AdminContext';
 import Button from '../components/common/Button';
 import { inputCls, labelCls, StatusBadge } from '../components/admin/AdminForm';
 
 export default function AdminLogin() {
   const { login, setupMasterAdmin, isAdmin, isMaster, currentUser, admins, addAdmin, removeAdmin, updateAdmin, completeInvitation } = useAdmin();
   const navigate = useNavigate();
-  const [mode, setMode] = useState('login');
-  const [email, setEmail] = useState(MASTER_ADMIN);
+  const [searchParams] = useSearchParams();
+  const [mode, setMode] = useState(searchParams.get('setup') === '1' ? 'setup' : 'login');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [setupKey, setSetupKey] = useState('');
   const [inviteCode, setInviteCode] = useState('');
@@ -117,8 +118,6 @@ export default function AdminLogin() {
         <Button type="submit" variant="primary" size="lg" className="w-full"><ShieldCheck size={16} />{isInvitation ? 'Create Password & Activate' : isSetup ? 'Create Master Admin' : 'Admin Login'}</Button>
       </form>
       <button type="button" onClick={() => { setMode(isInvitation || isSetup ? 'login' : 'invite'); setError(''); }} className="mt-5 flex w-full items-center justify-center gap-1 text-xs font-semibold text-secondary hover:underline"><UserPlus size={13} />{isInvitation || isSetup ? 'Back to admin login' : 'Have an invitation? Create password'}</button>
-      {!isInvitation && !isSetup && <button type="button" onClick={() => { setMode('setup'); setError(''); }} className="mt-3 w-full text-center text-xs font-semibold text-slate-400 hover:text-secondary">First-time Hostinger setup</button>}
-      {!isInvitation && <p className="mt-5 text-center text-xs text-slate-400">Master admin: <span className="font-semibold text-slate-500">{MASTER_ADMIN}</span></p>}
     </div></div>
   );
 }

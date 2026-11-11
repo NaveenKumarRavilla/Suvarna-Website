@@ -109,6 +109,7 @@ export default function AdminLayout() {
     sharedStoreSaving,
     sharedStoreDirty,
     sharedStoreError,
+    sharedStoreWarning,
     sharedStoreConflict,
     recoveredDraftConflicts,
     resolveRecoveredDraftConflict,
@@ -180,6 +181,11 @@ export default function AdminLayout() {
               {sharedStoreConflict
                 ? `Save conflict: ${sharedStoreError} Your unsaved edits are still in this tab; do not refresh or close it until they are recovered.`
                 : `Shared store sync failed: ${sharedStoreError}`}
+            </p>
+          )}
+          {sharedStoreWarning && (
+            <p role="status" className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+              {sharedStoreWarning}
             </p>
           )}
           {recoveredDraftConflicts.length > 0 && (

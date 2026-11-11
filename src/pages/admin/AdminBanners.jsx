@@ -479,7 +479,7 @@ export default function AdminBanners() {
                 <span>Banner media guidelines</span>
               </div>
               <p>Image: recommended 1600 × 900 px, minimum 1200 × 675 px, maximum 2400 × 1400 px.</p>
-              <p className="mt-1">Video: best 1280 × 720 px, MP4/WebM, minimum 10 sec, under 4MB for local browser storage.</p>
+              <p className="mt-1">Video: best 1280 × 720 px, MP4/WebM, minimum 10 sec, under 4MB.</p>
             </div>
 
             <div>
@@ -535,7 +535,7 @@ export default function AdminBanners() {
                 <Field label="Short Video *">
                   <input
                     type="file"
-                    accept="video/mp4,video/webm,video/quicktime,video/*"
+                    accept="video/mp4,video/webm"
                     onChange={handleVideoUpload}
                     className="block w-full cursor-pointer rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 file:mr-3 file:rounded file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white"
                   />

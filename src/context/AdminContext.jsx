@@ -5,6 +5,7 @@ import { defaultManagedCategories, normalizeCategoryId } from '../data/categorie
 import { defaultPolicies } from '../data/policies';
 import { apiRequest } from '../utils/api';
 import { getStorefrontProducts } from '../utils/productQuality';
+import { createNextProductId } from '../utils/productId';
 import { applySharedStoreDraftChoice, rebaseSharedStoreDraft } from '../utils/sharedStoreDraft';
 
 const AdminContext = createContext(null);
@@ -181,17 +182,6 @@ const loadStore = () => {
 const nextId = (list) =>
   list.length ? Math.max(...list.map((i) => Number(i.id) || 0)) + 1 : 1;
 
-const createPermanentProductId = () => {
-  const cryptoApi = globalThis.crypto;
-  if (!cryptoApi?.getRandomValues) throw new Error('Secure product ID generation is unavailable in this browser.');
-  const suffix = cryptoApi.randomUUID
-    ? cryptoApi.randomUUID()
-    : [...cryptoApi.getRandomValues(new Uint8Array(16))]
-      .map((byte) => byte.toString(16).padStart(2, '0'))
-      .join('');
-  return `PRD-${suffix}`;
-};
-
 const normalizeEmail = (email = '') => String(email || '').trim().toLowerCase();
 
 const dedupeBanners = (items = []) => {
@@ -290,6 +280,7 @@ export function AdminProvider({ children }) {
   storefrontDataAvailableRef.current = storefrontDataAvailable;
   const [sharedStoreSaving, setSharedStoreSaving] = useState(false);
   const [sharedStoreError, setSharedStoreError] = useState('');
+  const [sharedStoreWarning, setSharedStoreWarning] = useState('');
   const [sharedStoreConflict, setSharedStoreConflict] = useState(false);
   const [recoveredDraftConflicts, setRecoveredDraftConflicts] = useState([]);
   const [adminFormDirty, setAdminFormDirty] = useState(false);
@@ -673,7 +664,7 @@ export function AdminProvider({ children }) {
         else products.push({ ...operation.product, id: operation.id });
         continue;
       }
-      products.push({ ...operation.product, id: createPermanentProductId() });
+      products.push({ ...operation.product, id: createNextProductId(products) });
     }
     return { ...current, products };
   });
@@ -716,7 +707,23 @@ export function AdminProvider({ children }) {
           setStore((current) => ({ ...current, admins }));
         }
         if (session.admin?.master) {
-          await apiRequest('admin-media-migrate', { method: 'POST', body: {} });
+          try {
+            const migration = await apiRequest('admin-media-migrate', { method: 'POST', body: {} });
+            if (active) {
+              setSharedStoreWarning(
+                Number(migration.skipped) > 0
+                  ? `Admin data loaded, but ${migration.skipped} legacy embedded media item${Number(migration.skipped) === 1 ? ' was' : 's were'} not migrated because its file type could not be verified. See the Hostinger PHP error log for details.`
+                  : ''
+              );
+            }
+          } catch (error) {
+            console.error('Could not migrate embedded shared-store media; continuing admin data load.', error);
+            if (active) {
+              setSharedStoreWarning(
+                'The legacy media migration did not complete. Admin data will still load, but embedded media remains unmigrated. Check the Hostinger PHP error log for admin-media-migrate before retrying the migration.'
+              );
+            }
+          }
         }
         const { data, revision = 0 } = await apiRequest('admin-data');
         if (!active) return;
@@ -994,6 +1001,7 @@ export function AdminProvider({ children }) {
       ),
       setAdminFormDirty,
       sharedStoreError,
+      sharedStoreWarning,
       sharedStoreConflict,
       recoveredDraftConflicts,
       resolveRecoveredDraftConflict,
@@ -1125,6 +1133,31 @@ export function AdminProvider({ children }) {
           return Promise.resolve(false);
         }
         return commitSharedMutationConfirmed((s) => ({ ...s, products: s.products.filter((product) => String(product.id) !== String(id)) }));
+      },
+      deleteProducts: (ids) => {
+        const idsToDelete = new Set(ids.map(String));
+        if (!idsToDelete.size) return Promise.resolve(true);
+        const reservedIds = new Set(
+          storeRef.current.orders
+            .filter((order) =>
+              order.stockReservationState === 'reserved' &&
+              !['cancelled', 'delivered'].includes(String(order.status || '').toLowerCase())
+            )
+            .flatMap((order) => (order.stockReservations || []).map((reservation) => String(reservation.productId)))
+        );
+        const reservedProducts = storeRef.current.products.filter((product) =>
+          idsToDelete.has(String(product.id)) && reservedIds.has(String(product.id))
+        );
+        if (reservedProducts.length) {
+          setSharedStoreError(
+            `Cannot delete selected products while active orders reserve their stock: ${reservedProducts.map((product) => product.name || product.id).join(', ')}.`
+          );
+          return Promise.resolve(false);
+        }
+        return commitSharedMutationConfirmed((s) => ({
+          ...s,
+          products: s.products.filter((product) => !idsToDelete.has(String(product.id))),
+        }));
       },
 
       banners: store.banners,
@@ -1401,6 +1434,7 @@ export function AdminProvider({ children }) {
     storefrontError,
     sharedStoreSaving,
     sharedStoreError,
+    sharedStoreWarning,
     sharedStoreConflict,
     recoveredDraftConflicts,
     adminFormDirty,

@@ -541,8 +541,8 @@ try {
                 }
                 $data = json_decode($shared['store_data'], true);
                 if (!is_array($data)) throw new RuntimeException('Shared store data is not valid JSON.');
-                $migrated = externalizeEmbeddedMedia($data);
-                if ($migrated > 0) {
+                $migration = externalizeEmbeddedMedia($data);
+                if ($migration['migrated'] > 0) {
                     $serialized = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                     if ($serialized === false || strlen($serialized) > MAX_SHARED_STORE_BYTES) {
                         throw new RuntimeException('Migrated shared store data exceeds the configured size limit.');
@@ -552,8 +552,9 @@ try {
                 }
                 $pdo->commit();
                 respond(200, [
-                    'migrated' => $migrated,
-                    'revision' => (int) $shared['revision'] + ($migrated > 0 ? 1 : 0),
+                    'migrated' => $migration['migrated'],
+                    'skipped' => $migration['skipped'],
+                    'revision' => (int) $shared['revision'] + ($migration['migrated'] > 0 ? 1 : 0),
                 ]);
             } catch (Throwable $error) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
@@ -2101,7 +2102,10 @@ function storeMediaFile(string $mime, string|false $contents): string
         'video/mp4' => 'mp4',
         'video/webm' => 'webm',
     ];
-    if (!isset($extensions[$mime]) || $contents === false || $contents === '') {
+    if (!isset($extensions[$mime])) {
+        throw new ApiException(415, 'Unsupported media format. Use JPEG, PNG, WebP, GIF, AVIF, MP4, or WebM.');
+    }
+    if ($contents === false || $contents === '') {
         throw new RuntimeException('The uploaded media file could not be validated.');
     }
     $mediaDirectory = dirname(__DIR__) . '/uploads/media';
@@ -2142,16 +2146,29 @@ function cleanupUnreferencedMedia(array $previousData, array $currentData): void
     }
 }
 
-function externalizeEmbeddedMedia(array &$data): int
+function externalizeEmbeddedMedia(array &$data): array
 {
     $count = 0;
-    $externalize = static function (mixed &$value) use (&$count): void {
+    $skipped = 0;
+    $supportedMimes = [
+        'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif',
+        'video/mp4', 'video/webm',
+    ];
+    $externalize = static function (mixed &$value) use (&$count, &$skipped, $supportedMimes): void {
         if (!is_string($value) || !preg_match('/^data:(image\/(?:jpeg|png|webp|gif|avif)|video\/(?:mp4|webm));base64,(.+)$/s', $value, $matches)) return;
         $binary = base64_decode($matches[2], true);
-        if ($binary === false || $binary === '') throw new RuntimeException('An embedded media item is not valid base64 data.');
+        if ($binary === false || $binary === '') {
+            $skipped += 1;
+            error_log('Skipped an invalid embedded media item during shared-store migration.');
+            return;
+        }
         $finfo = new finfo(FILEINFO_MIME_TYPE);
         $actualMime = $finfo->buffer($binary);
-        if ($actualMime !== $matches[1]) throw new RuntimeException('Embedded media type does not match its file contents.');
+        if (!is_string($actualMime) || !in_array($actualMime, $supportedMimes, true)) {
+            $skipped += 1;
+            error_log('Skipped an embedded media item with an unsupported or unrecognized file type during shared-store migration.');
+            return;
+        }
         $value = storeMediaFile($actualMime, $binary);
         $count += 1;
     };
@@ -2170,7 +2187,7 @@ function externalizeEmbeddedMedia(array &$data): int
         }
         unset($record);
     }
-    return $count;
+    return ['migrated' => $count, 'skipped' => $skipped];
 }
 
 function createOrderIdempotently(PDO $pdo, array $input): array

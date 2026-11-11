@@ -1,10 +1,22 @@
 const API_PATH = '/api/index.php';
 const MAX_MEDIA_BYTES = 4 * 1024 * 1024;
+const SUPPORTED_MEDIA_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/avif',
+  'video/mp4',
+  'video/webm',
+]);
 
 export async function uploadMediaFile(file) {
   if (!file) throw new Error('Choose a media file first.');
   if (file.size < 1 || file.size > MAX_MEDIA_BYTES) {
     throw new Error('Media files must be no larger than 4 MB.');
+  }
+  if (file.type && !SUPPORTED_MEDIA_TYPES.has(file.type.toLowerCase())) {
+    throw new Error('Unsupported media format. Use JPEG, PNG, WebP, GIF, AVIF, MP4, or WebM.');
   }
 
   const formData = new FormData();
@@ -41,8 +53,8 @@ export async function uploadMediaFile(file) {
 
 export function validateVideoDuration(file, minimumSeconds = 10) {
   return new Promise((resolve, reject) => {
-    if (!file || !file.type.startsWith('video/')) {
-      reject(new Error('Only video files are allowed.'));
+    if (!file || !['video/mp4', 'video/webm'].includes(String(file.type || '').toLowerCase())) {
+      reject(new Error('Use an MP4 or WebM video.'));
       return;
     }
 

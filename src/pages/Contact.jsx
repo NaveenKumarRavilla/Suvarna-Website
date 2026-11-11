@@ -184,38 +184,38 @@ export default function Contact() {
               </p>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+            <form method="post" onSubmit={handleSubmit} className="mt-5 space-y-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label htmlFor="ct-name" className="mb-1.5 block text-xs font-semibold text-slate-600">
                     Name *
                   </label>
-                  <input id="ct-name" required className={inputCls} placeholder="Your name" />
+                  <input id="ct-name" name="name" required className={inputCls} placeholder="Your name" />
                 </div>
                 <div>
                   <label htmlFor="ct-email" className="mb-1.5 block text-xs font-semibold text-slate-600">
                     Email *
                   </label>
-                  <input id="ct-email" type="email" required className={inputCls} placeholder="you@example.com" />
+                  <input id="ct-email" name="email" type="email" required className={inputCls} placeholder="you@example.com" />
                 </div>
               </div>
               <div>
                 <label htmlFor="ct-phone" className="mb-1.5 block text-xs font-semibold text-slate-600">
                   Phone *
                 </label>
-                <input id="ct-phone" type="tel" required pattern="[+]?[0-9 ().-]+" title="Enter a valid phone number with 10 to 15 digits." className={inputCls} placeholder="+91 98765 43210" />
+                <input id="ct-phone" name="phone" type="tel" required pattern="\+?[0-9 \(\).\-]+" title="Enter a valid phone number with 10 to 15 digits." className={inputCls} placeholder="+91 98765 43210" />
               </div>
               <div>
                 <label htmlFor="ct-subject" className="mb-1.5 block text-xs font-semibold text-slate-600">
                   Subject *
                 </label>
-                <input id="ct-subject" required className={inputCls} placeholder="How can we help?" />
+                <input id="ct-subject" name="subject" required className={inputCls} placeholder="How can we help?" />
               </div>
               <div>
                 <label htmlFor="ct-message" className="mb-1.5 block text-xs font-semibold text-slate-600">
                   Message *
                 </label>
-                <textarea id="ct-message" required rows="4" className={inputCls} placeholder="Write your message..." />
+                <textarea id="ct-message" name="message" required rows="4" className={inputCls} placeholder="Write your message..." />
               </div>
               {error && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-600">{error}</p>}
               <Button type="submit" variant="primary" size="lg" disabled={sending}>

@@ -7,6 +7,7 @@ import { formatPrice } from '../../utils/helpers';
 import { getProductPublishabilityIssue } from '../../utils/productQuality';
 import { downloadCsv, parseCsv } from '../../utils/csv';
 import { apiRequest } from '../../utils/api';
+import { createNextProductId, createProductImportId, normalizeProductId } from '../../utils/productId';
 import { fingerprintText } from '../../utils/textFingerprint';
 import { clearPendingImportDraft, getPendingImportDraft, rememberPendingImportDraft } from '../../utils/pendingImportDrafts';
 import Button from '../../components/common/Button';
@@ -39,6 +40,7 @@ const productCsvHeaders = [
 const calculatedProductFields = new Set([
   'rating',
   'reviews',
+  'productUid',
   'calculatedRating',
   'calculatedReviewCount',
   'customerReviewsExportOnly',
@@ -84,7 +86,7 @@ const parseProductCsv = (text) => {
       throw new Error(`Row ${rowNumber}: expected ${headers.length} columns but found ${cells.length}. No products were imported.`);
     }
     const record = Object.fromEntries(headers.map((header, index) => [header, cells[index] || '']));
-    const id = (record.id || '').trim();
+    const id = normalizeProductId(record.id);
     if (id && seenIds.has(id)) throw new Error(`Row ${rowNumber}: product ID "${id}" appears more than once in the CSV.`);
     if (id) seenIds.add(id);
 
@@ -240,15 +242,8 @@ const warrantyFormValues = (warranty = '') => {
 };
 const PRODUCT_FORM_DRAFT_KEY = 'suvarna_admin_product_form_draft';
 const PRODUCT_IMPORT_DRAFT_KEY = 'suvarna_admin_product_import_draft';
-const createPendingProductId = () => {
-  const cryptoApi = globalThis.crypto;
-  if (!cryptoApi?.getRandomValues) throw new Error('Secure product ID generation is unavailable in this browser.');
-  const suffix = cryptoApi.randomUUID ? cryptoApi.randomUUID() : [...cryptoApi.getRandomValues(new Uint8Array(16))].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-  return `PRD-${suffix}`;
-};
-
 export default function AdminProducts() {
-  const { products, categories, saveProductBatch, updateProduct, deleteProduct, setAdminFormDirty, getPendingImportIds, rememberPendingImportIds, clearPendingImportIds } = useAdmin();
+  const { products, categories, saveProductBatch, updateProduct, deleteProduct, deleteProducts, setAdminFormDirty, getPendingImportIds, rememberPendingImportIds, clearPendingImportIds } = useAdmin();
   const location = useLocation();
   const navigate = useNavigate();
   const [editing, setEditing] = useState(null);
@@ -261,6 +256,8 @@ export default function AdminProducts() {
   const [formError, setFormError] = useState('');
   const [categorySearch, setCategorySearch] = useState('all');
   const [productSearch, setProductSearch] = useState('');
+  const [selectedProductIds, setSelectedProductIds] = useState(() => new Set());
+  const [deletingSelected, setDeletingSelected] = useState(false);
   const [importError, setImportError] = useState('');
   const [importStatus, setImportStatus] = useState('');
   const [importing, setImporting] = useState(false);
@@ -268,6 +265,7 @@ export default function AdminProducts() {
   const [savingProduct, setSavingProduct] = useState(false);
   const [uploadingProductImage, setUploadingProductImage] = useState(false);
   const importInputRef = useRef(null);
+  const selectVisibleProductsRef = useRef(null);
   const restoredDraftRef = useRef(false);
   const initialFormRef = useRef(JSON.stringify(emptyForm()));
   const uploadingProductImageRef = useRef(false);
@@ -296,6 +294,10 @@ export default function AdminProducts() {
     ].join(' ').toLowerCase();
     return searchableText.includes(searchTerm);
   });
+  const displayedProductIds = displayedProducts.map((product) => String(product.id));
+  const allDisplayedProductsSelected = displayedProductIds.length > 0 &&
+    displayedProductIds.every((id) => selectedProductIds.has(id));
+  const selectedProductCount = products.filter((product) => selectedProductIds.has(String(product.id))).length;
   const hiddenFromStorefrontCount = products.filter((product) =>
     Boolean(getProductPublishabilityIssue(product, products))
   ).length;
@@ -304,6 +306,50 @@ export default function AdminProducts() {
     uploadingProductImageRef.current = busy;
     setUploadingProductImage(busy);
   };
+  useEffect(() => {
+    if (selectVisibleProductsRef.current) {
+      selectVisibleProductsRef.current.indeterminate =
+        displayedProductIds.some((id) => selectedProductIds.has(id)) && !allDisplayedProductsSelected;
+    }
+  }, [allDisplayedProductsSelected, displayedProductIds, selectedProductIds]);
+  useEffect(() => {
+    const currentIds = new Set(products.map((product) => String(product.id)));
+    setSelectedProductIds((selected) => {
+      const retained = new Set([...selected].filter((id) => currentIds.has(id)));
+      return retained.size === selected.size ? selected : retained;
+    });
+  }, [products]);
+
+  const toggleProductSelection = (id) => {
+    const key = String(id);
+    setSelectedProductIds((selected) => {
+      const next = new Set(selected);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const toggleVisibleProductSelection = () => {
+    setSelectedProductIds((selected) => {
+      const next = new Set(selected);
+      if (allDisplayedProductsSelected) displayedProductIds.forEach((id) => next.delete(id));
+      else displayedProductIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+  const deleteSelectedProducts = async () => {
+    const selected = products.filter((product) => selectedProductIds.has(String(product.id)));
+    if (!selected.length || deletingSelected) return;
+    if (!window.confirm(`Delete ${selected.length} selected product${selected.length === 1 ? '' : 's'}? This cannot be undone. Products reserved by active orders cannot be deleted.`)) return;
+    setDeletingSelected(true);
+    try {
+      if (await deleteProducts(selected.map((product) => product.id))) {
+        setSelectedProductIds(new Set());
+      }
+    } finally {
+      setDeletingSelected(false);
+    }
+  };
 
   const openAdd = () => {
     if (uploadingProductImageRef.current) return;
@@ -311,7 +357,7 @@ export default function AdminProducts() {
     const nextForm = emptyForm();
     initialFormRef.current = JSON.stringify(nextForm);
     setFormSession((session) => session + 1);
-    setEditing(null); setEditBase(null); setPendingCreateId(null); setFormMode('add'); setForm(nextForm); setFormError(''); setAdminFormDirty(true); setFormOpen(true);
+    setEditing(null); setEditBase(null); setPendingCreateId(createNextProductId(products)); setFormMode('add'); setForm(nextForm); setFormError(''); setAdminFormDirty(true); setFormOpen(true);
   };
   const openEdit = (product, clone = false) => {
     if (uploadingProductImageRef.current) return;
@@ -328,7 +374,7 @@ export default function AdminProducts() {
     initialFormRef.current = JSON.stringify(nextForm);
     setEditing(clone ? null : product);
     setEditBase(clone ? null : JSON.stringify(product));
-    setPendingCreateId(null);
+    setPendingCreateId(clone ? createNextProductId(products) : null);
     setFormMode(clone ? 'clone' : 'edit');
     setFormError('');
     setAdminFormDirty(true);
@@ -362,7 +408,13 @@ export default function AdminProducts() {
       const isEditing = draft.mode === 'edit' && !!existing;
       setEditing(isEditing ? existing : null);
       setEditBase(isEditing ? (draft.baseRecord || JSON.stringify(existing)) : null);
-      setPendingCreateId(draft.pendingCreateId || null);
+      const savedPendingProduct = products.some((product) =>
+        normalizeProductId(product.id) === normalizeProductId(draft.pendingCreateId)
+      );
+      const pendingId = draft.pendingCreateId && (
+        savedPendingProduct || /^PD-\d+$/i.test(String(draft.pendingCreateId))
+      ) ? draft.pendingCreateId : createNextProductId(products);
+      setPendingCreateId(isEditing ? null : pendingId);
       setFormMode(isEditing ? 'edit' : draft.mode === 'clone' ? 'clone' : 'add');
       setFormSession((session) => session + 1);
       setForm(recoveredForm);
@@ -490,7 +542,7 @@ export default function AdminProducts() {
     }
     setSavingProduct(true);
     try {
-      const operationId = editing?.id || pendingCreateId || createPendingProductId();
+      const operationId = editing?.id || pendingCreateId || createNextProductId(products);
       if (!editing && !pendingCreateId) {
         setPendingCreateId(operationId);
         try { localStorage.setItem(PRODUCT_FORM_DRAFT_KEY, JSON.stringify({ form, editingId: null, mode: formMode, baseRecord: null, pendingCreateId: operationId })); }
@@ -566,12 +618,13 @@ export default function AdminProducts() {
         pendingImport = getPendingImportDraft(localStorage, PRODUCT_IMPORT_DRAFT_KEY, sourceFingerprint);
       } catch (storageError) { retryStorageAvailable = false; console.error('Could not restore product import IDs.', storageError); }
       if (!pendingImport) pendingImport = getPendingImportIds('products', sourceFingerprint);
-      const currentProducts = new Map(products.map((product) => [String(product.id), product]));
+      const currentProducts = new Map(products.map((product) => [normalizeProductId(product.id), product]));
+      const reservedProducts = [...products];
       let updated = 0;
       let added = 0;
       const operationIds = [];
       const operations = imported.map(({ id, product, fields, rowNumber, initialStock, stockAdjustment }, rowIndex) => {
-        const existing = id ? currentProducts.get(id) : null;
+        const existing = id ? currentProducts.get(normalizeProductId(id)) : null;
         if (existing) {
           const patch = Object.fromEntries(Object.entries(product).filter(([field]) => fields.has(field)));
           if (stockAdjustment.enabled) {
@@ -602,7 +655,8 @@ export default function AdminProducts() {
         if (initialStock.quantity != null) newProduct.stockQuantity = initialStock.quantity;
         delete newProduct.id;
         const pendingId = pendingImport?.ids?.[rowIndex];
-        const operationId = pendingId && pendingId !== id ? pendingId : createPendingProductId();
+        const operationId = createProductImportId(reservedProducts, pendingId);
+        reservedProducts.push({ id: operationId });
         operationIds.push(operationId);
         return { id: operationId, product: newProduct };
       });
@@ -616,7 +670,7 @@ export default function AdminProducts() {
       clearPendingImportIds('products', sourceFingerprint);
       try { clearPendingImportDraft(localStorage, PRODUCT_IMPORT_DRAFT_KEY, sourceFingerprint); } catch (storageError) { console.error('Could not clear product import IDs.', storageError); }
       imported.forEach(({ id }) => {
-        if (id && currentProducts.has(id)) updated += 1;
+        if (id && currentProducts.has(normalizeProductId(id))) updated += 1;
         else added += 1;
       });
       const adjustedCount = imported.filter((item) => item.stockAdjustment.enabled).length;
@@ -680,7 +734,7 @@ export default function AdminProducts() {
         }
       />
 
-      <p className="mb-4 text-xs text-slate-500">Import merges rows by product ID; matching IDs update supplied product fields, and new products receive generated IDs. Blank image fields preserve existing images; set clearImages to TRUE to remove them. Products can be saved without images and use a display placeholder. Export includes product fields, specifications, and customer reviews, but excludes image columns. Calculated rating, review count, and customer reviews are export-only and ignored during import.</p>
+      <p className="mb-4 text-xs text-slate-500">Import matches rows by Product ID: an ID already in the catalogue updates that product; any new row, whether its ID is blank or unmatched, receives the next PD-001-style ID. Existing product IDs are preserved. Blank image fields preserve existing images; set clearImages to TRUE to remove them. Products can be saved without images and use a display placeholder. Export includes product fields, specifications, and customer reviews, but excludes image columns. Calculated rating, review count, and customer reviews are export-only and ignored during import.</p>
       {importError && <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{importError}</p>}
       {importStatus && <p role="status" className="mb-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{importStatus}</p>}
 
@@ -705,6 +759,7 @@ export default function AdminProducts() {
                 <p className="mt-1 text-xs text-slate-500">Core information customers see first.</p>
                 <div className="mt-3 space-y-3">
                   <Field label="Category *"><select value={normalizeCategoryId(form.category)} onChange={set('category')} className={inputCls}>{categoryOptions.map((category) => <option key={category.id} value={category.id}>{category.label}</option>)}</select></Field>
+                  <Field label="Product ID"><input readOnly value={editing?.id || pendingCreateId || ''} className={`${inputCls} bg-slate-100 font-mono`} /></Field>
                   <Field label="Product Name *"><input required value={form.name} onChange={set('name')} className={inputCls} placeholder="Dell Latitude 5440 Laptop" /></Field>
                   <Field label="SKU / Model number"><input value={form.sku} onChange={set('sku')} className={inputCls} placeholder="Optional unique variant identifier" /></Field>
                   <Field label="Brand *"><input required value={form.brand} onChange={set('brand')} className={inputCls} placeholder="Dell" /></Field>
@@ -773,33 +828,71 @@ export default function AdminProducts() {
         </section>
       )}
 
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+        <div className="text-sm text-slate-600" aria-live="polite">
+          {selectedProductCount ? `${selectedProductCount} product${selectedProductCount === 1 ? '' : 's'} selected` : 'Select products to delete them together.'}
+        </div>
+        <div className="flex items-center gap-2">
+          {selectedProductCount > 0 && (
+            <Button type="button" variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={deleteSelectedProducts} disabled={deletingSelected}>
+              <Trash2 size={15} />{deletingSelected ? 'Deleting…' : `Delete selected (${selectedProductCount})`}
+            </Button>
+          )}
+          {selectedProductCount > 0 && (
+            <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedProductIds(new Set())} disabled={deletingSelected}>
+              Clear selection
+            </Button>
+          )}
+        </div>
+      </div>
+
       <div className={tableWrap}>
         <table className={`${tableCls} w-full !min-w-0 table-fixed`}>
           <colgroup>
-            <col style={{ width: '7%' }} />
+            <col style={{ width: '4%' }} />
             <col style={{ width: '9%' }} />
-            <col style={{ width: '21%' }} />
-            <col style={{ width: '9%' }} />
-            <col style={{ width: '7%' }} />
-            <col style={{ width: '20%' }} />
+            <col style={{ width: '10%' }} />
             <col style={{ width: '18%' }} />
             <col style={{ width: '9%' }} />
+            <col style={{ width: '9%' }} />
+            <col style={{ width: '17%' }} />
+            <col style={{ width: '17%' }} />
+            <col style={{ width: '7%' }} />
           </colgroup>
           <thead className="border-b border-slate-100 bg-slate-50">
             <tr>
-              <th className={`${thCls} !px-1`}>Product ID</th>
-              <th className={`${thCls} !px-1`}>Category</th>
-              <th className={`${thCls} !px-2`}>Product Name</th>
-              <th className={`${thCls} !px-2`}>Price</th>
-              <th className={`${thCls} !px-2`}>Featured</th>
-              <th className={`${thCls} !px-2`}>Warranty</th>
-              <th className={`${thCls} !px-2`}>Stock Status</th>
+              <th className={`${thCls} !px-1`}>
+                <input
+                  ref={selectVisibleProductsRef}
+                  type="checkbox"
+                  checked={allDisplayedProductsSelected}
+                  onChange={toggleVisibleProductSelection}
+                  aria-label={`Select all ${displayedProducts.length} visible products`}
+                  className="h-4 w-4 accent-secondary"
+                />
+              </th>
+              <th className={`${thCls} whitespace-nowrap !px-1`}>Product ID</th>
+              <th className={`${thCls} whitespace-nowrap !px-1`}>Category</th>
+              <th className={`${thCls} whitespace-nowrap !px-2`}>Product Name</th>
+              <th className={`${thCls} whitespace-nowrap !px-2`}>Price</th>
+              <th className={`${thCls} whitespace-nowrap !px-2`}>Featured</th>
+              <th className={`${thCls} whitespace-nowrap !px-2`}>Warranty</th>
+              <th className={`${thCls} whitespace-nowrap !px-2`}>Stock Status</th>
               <th className={`${thCls} !px-1`}><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {displayedProducts.map((product) => (
               <tr key={product.id} className="align-top transition hover:bg-slate-50">
+                <td className={`${tdCls} !px-1 text-center`}>
+                  <input
+                    type="checkbox"
+                    checked={selectedProductIds.has(String(product.id))}
+                    onChange={() => toggleProductSelection(product.id)}
+                    aria-label={`Select ${product.name}`}
+                    className="h-4 w-4 accent-secondary"
+                  />
+                </td>
                 <td className={`${tdCls} break-all !px-1 font-mono text-[10px] leading-4 text-slate-500`}>{product.id}</td>
                 <td className={`${tdCls} break-words !px-1 text-xs capitalize`}>{product.category}</td>
                 <td className={`${tdCls} px-2`}>

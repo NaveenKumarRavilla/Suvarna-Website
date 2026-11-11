@@ -254,7 +254,7 @@ export default function HeroSlider() {
                     muted={true}
                     playsInline
                     controls={false}
-                    preload="auto"
+                    preload={i === index ? 'auto' : 'none'}
                     onCanPlay={(e) => {
                       if (
                         String(slide.id) === String(heroSlides[index]?.id ?? '') &&

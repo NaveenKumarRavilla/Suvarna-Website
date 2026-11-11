@@ -67,8 +67,9 @@ export default function App() {
 
 function ApplicationShell() {
   const { pathname } = useLocation();
-  const { storefrontReady, storefrontDataAvailable, storefrontError } = useAdmin();
+  const { storefrontReady, storefrontDataAvailable, storefrontError, settings } = useAdmin();
   const isAdminRoute = pathname.startsWith('/admin');
+  const announcement = typeof settings.announcement === 'string' ? settings.announcement.trim() : '';
 
   if (!isAdminRoute && !storefrontReady) {
     return (
@@ -101,6 +102,11 @@ function ApplicationShell() {
           Skip to content
         </a>
         <Header />
+        {!isAdminRoute && announcement && (
+          <p role="status" aria-label="Store announcement" className="bg-primary px-4 py-3 text-center text-sm font-medium text-white">
+            {announcement}
+          </p>
+        )}
         {storefrontDataAvailable && storefrontError && (
           <p role="status" className="mx-auto mt-3 w-[calc(100%-2rem)] max-w-8xl rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-900">
             The latest store data could not be refreshed. Showing the last successfully loaded catalogue.

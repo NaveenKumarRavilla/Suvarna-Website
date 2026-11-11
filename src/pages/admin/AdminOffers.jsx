@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, BadgePercent } from 'lucide-react';
+import { Pencil, Plus, Trash2, BadgePercent } from 'lucide-react';
 import { useAdmin } from '../../context/AdminContext';
 import Button from '../../components/common/Button';
 import { createClientRecordId } from '../../utils/recordId';
@@ -17,40 +17,86 @@ const OFFER_DRAFT_KEY = 'suvarna_admin_offer_form_draft';
 export default function AdminOffers() {
   const { offers, categories, addOffer, updateOffer, deleteOffer } = useAdmin();
   const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState(null);
+  const [editBase, setEditBase] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
   const [pendingOfferId, setPendingOfferId] = useState(null);
 
   useEffect(() => {
-    try { const draft = JSON.parse(localStorage.getItem(OFFER_DRAFT_KEY) || 'null'); if (draft?.form) { setForm({ ...emptyForm, ...draft.form }); setPendingOfferId(draft.pendingId || null); setModalOpen(true); setSaveError('Recovered an unsaved offer form from this browser.'); } }
+    try { const draft = JSON.parse(localStorage.getItem(OFFER_DRAFT_KEY) || 'null'); if (draft?.form) { setForm({ ...emptyForm, ...draft.form }); setEditingId(draft.editingId ?? null); setEditBase(draft.baseRecord || null); setPendingOfferId(draft.pendingId || null); setModalOpen(true); setSaveError('Recovered an unsaved offer form from this browser.'); } }
     catch (error) { console.error('Could not restore offer draft.', error); }
   }, []);
   useEffect(() => {
     if (!modalOpen) return;
-    try { localStorage.setItem(OFFER_DRAFT_KEY, JSON.stringify({ form, pendingId: pendingOfferId })); }
+    try { localStorage.setItem(OFFER_DRAFT_KEY, JSON.stringify({ form, editingId, baseRecord: editBase, pendingId: pendingOfferId })); }
     catch (error) { console.error('Could not preserve offer draft.', error); }
-  }, [form, modalOpen, pendingOfferId]);
+  }, [editBase, editingId, form, modalOpen, pendingOfferId]);
 
-  const openAdd = () => { setForm(emptyForm); setPendingOfferId(createClientRecordId('OFR')); setModalOpen(true); };
+  const openAdd = () => {
+    setEditingId(null);
+    setEditBase(null);
+    setForm(emptyForm);
+    setPendingOfferId(createClientRecordId('OFR'));
+    setSaveError('');
+    setModalOpen(true);
+  };
+
+  const openEdit = (offer) => {
+    setEditingId(offer.id);
+    setEditBase(JSON.stringify(offer));
+    setPendingOfferId(null);
+    setForm({
+      title: offer.title || '',
+      description: offer.description || '',
+      discount: offer.discount || '',
+      category: offer.category || 'laptops',
+    });
+    setSaveError('');
+    setModalOpen(true);
+  };
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setSaving(true);
-    const id = pendingOfferId || createClientRecordId('OFR');
-    if (!pendingOfferId) {
-      setPendingOfferId(id);
-      try { localStorage.setItem(OFFER_DRAFT_KEY, JSON.stringify({ form, pendingId: id })); }
-      catch (storageError) { console.error('Could not preserve offer creation ID.', storageError); }
+    const payload = {
+      title: form.title.trim(),
+      description: form.description.trim(),
+      discount: form.discount.trim(),
+      category: form.category,
+    };
+
+    if (editingId !== null) {
+      const current = offers.find((offer) => String(offer.id) === String(editingId));
+      if (!current || JSON.stringify(current) !== editBase) {
+        setSaveError('This offer changed in another admin session after you opened it. Your draft is preserved; reload the latest offer and reapply your changes.');
+        return;
+      }
     }
-    const saved = await addOffer({ ...form, id, active: true });
+
+    setSaving(true);
+    let saved;
+    if (editingId !== null) {
+      saved = await updateOffer(editingId, payload);
+    } else {
+      const id = pendingOfferId || createClientRecordId('OFR');
+      if (!pendingOfferId) {
+        setPendingOfferId(id);
+        try { localStorage.setItem(OFFER_DRAFT_KEY, JSON.stringify({ form, editingId, baseRecord: editBase, pendingId: id })); }
+        catch (storageError) { console.error('Could not preserve offer creation ID.', storageError); }
+      }
+      saved = await addOffer({ ...payload, id, active: true });
+    }
     setSaving(false);
     if (!saved) { setSaveError('Offer was not confirmed by the database. Your draft is preserved; retry after resolving the shared-store error.'); return; }
     setSaveError('');
     localStorage.removeItem(OFFER_DRAFT_KEY);
     setForm(emptyForm);
+    setEditingId(null);
+    setEditBase(null);
+    setPendingOfferId(null);
     setModalOpen(false);
   };
 
@@ -98,6 +144,14 @@ export default function AdminOffers() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => openEdit(o)}
+                    aria-label={`Edit offer ${o.title}`}
+                    className="rounded-lg p-1.5 text-slate-400 transition hover:bg-secondary/10 hover:text-secondary"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    type="button"
                     onClick={async () => { if (!window.confirm(`Delete the "${o.title}" offer?`)) return; const deleted = await deleteOffer(o.id); if (!deleted) setSaveError('Offer was not deleted because the database could not confirm the change.'); }}
                     aria-label={`Delete offer ${o.title}`}
                     className="rounded-lg p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
@@ -112,7 +166,7 @@ export default function AdminOffers() {
       )}
 
       {modalOpen && (
-        <Modal title="Add Offer" onClose={() => setModalOpen(false)}>
+        <Modal title={editingId !== null ? 'Edit Offer' : 'Add Offer'} onClose={() => setModalOpen(false)}>
           <form onSubmit={handleSubmit} className="space-y-4">
             {saveError && <p role="alert" className="text-sm text-red-600">{saveError}</p>}
             <Field label="Offer Title *">
@@ -136,7 +190,7 @@ export default function AdminOffers() {
             </div>
             <div className="flex gap-3 pt-1">
               <Button type="submit" variant="primary" className="flex-1" disabled={saving}>
-                {saving ? 'Saving…' : 'Add Offer'}
+                {saving ? 'Saving…' : editingId !== null ? 'Save Changes' : 'Add Offer'}
               </Button>
               <Button type="button" variant="ghost" onClick={() => setModalOpen(false)}>
                 Cancel

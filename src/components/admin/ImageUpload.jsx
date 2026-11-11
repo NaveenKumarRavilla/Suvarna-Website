@@ -4,7 +4,7 @@ import { getImageDimensions } from '../../utils/imageUpload';
 import { uploadMediaFile } from '../../utils/media';
 
 /**
- * Reusable image picker: upload from device (stored as data URL) OR paste a URL.
+ * Reusable image picker: upload from device to shared media storage OR paste a URL.
  * Supports single value (string) and multiple value (array) for admin product images.
  */
 export default function ImageUpload({
@@ -195,7 +195,7 @@ export default function ImageUpload({
         >
           <UploadCloud size={26} />
           <span className="text-xs font-semibold">{uploading ? 'Uploading…' : 'Upload from device'}</span>
-          <span className="text-[10px] text-slate-400">PNG, JPG, WebP up to 4 MB</span>
+          <span className="text-[10px] text-slate-400">JPEG, PNG, WebP, GIF, AVIF up to 4 MB</span>
         </button>
       )}
 
